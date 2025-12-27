@@ -1,0 +1,141 @@
+// ===== DOM Elements =====
+const inputField = document.getElementById('user-input');
+const ghostField = document.getElementById('ghost-input');
+const bigramList = document.getElementById('bigram-list');
+const trigramList = document.getElementById('trigram-list');
+const bigramWordSpan = document.getElementById('bigram-word');
+const trigramContextSpan = document.getElementById('trigram-context');
+
+// ===== State =====
+let currentSuggestion = "";
+let debounceTimer = null;
+
+// ===== Event Listeners =====
+inputField. addEventListener('input', handleInput);
+inputField.addEventListener('keydown', handleKeydown);
+inputField.addEventListener('scroll', handleScroll);
+
+// ===== Input Handler =====
+async function handleInput() {
+    const text = this.value;
+    
+    // Debounce API calls
+    clearTimeout(debounceTimer);
+    
+    debounceTimer = setTimeout(async () => {
+        // Handle prediction (ghost text)
+        if (text.length > 0 && !text.endsWith(" ")) {
+            try {
+                const response = await fetch(`/predict?text=${encodeURIComponent(text)}`);
+                const data = await response.json();
+                currentSuggestion = data.prediction || "";
+                
+                if (currentSuggestion) {
+                    ghostField.textContent = text + currentSuggestion;
+                } else {
+                    ghostField. textContent = "";
+                }
+            } catch (error) {
+                console.error('Prediction error:', error);
+                ghostField.textContent = "";
+            }
+        } else {
+            ghostField.textContent = "";
+            currentSuggestion = "";
+        }
+        
+        // Handle probabilities
+        if (text.length > 0) {
+            try {
+                const response = await fetch(`/probabilities?text=${encodeURIComponent(text)}`);
+                const data = await response.json();
+                updateProbabilities(data, text);
+            } catch (error) {
+                console.error('Probabilities error:', error);
+            }
+        } else {
+            resetProbabilities();
+        }
+    }, 150); // 150ms debounce
+}
+
+// ===== Keydown Handler =====
+function handleKeydown(e) {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        if (currentSuggestion) {
+            this.value += currentSuggestion + " ";
+            this.dispatchEvent(new Event('input'));
+        }
+    }
+}
+
+// ===== Scroll Sync =====
+function handleScroll() {
+    ghostField.scrollTop = this.scrollTop;
+}
+
+// ===== Update Probabilities =====
+function updateProbabilities(data, text) {
+    const hasBigram = data.bigram && data.bigram.length > 0;
+    const hasTrigram = data.trigram && data.trigram.length > 0;
+    
+    // Update 2-gram
+    if (hasBigram) {
+        bigramWordSpan.textContent = data.current_word;
+        renderPredictions(bigramList, data.bigram);
+    } else {
+        bigramList.innerHTML = '<div class="no-data">No data available</div>';
+    }
+    
+    // Update 3-gram
+    if (hasTrigram) {
+        trigramContextSpan.textContent = data. context;
+        renderPredictions(trigramList, data.trigram);
+    } else {
+        trigramList.innerHTML = '<div class="no-data">Requires at least 2 words</div>';
+    }
+}
+
+// ===== Render Predictions =====
+function renderPredictions(container, predictions) {
+    container.innerHTML = '';
+    
+    predictions.forEach((item, index) => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = `prediction-item${index === 0 ? ' top-choice' : ''}`;
+        
+        itemDiv.innerHTML = `
+            <div class="word-info">
+                <span class="word-rank">#${index + 1}</span>
+                <span class="word-text">${escapeHtml(item.word)}</span>
+            </div>
+            <div class="probability-info">
+                <div class="probability-bar-container">
+                    <div class="probability-bar" style="width: ${item. probability}%"></div>
+                </div>
+                <span class="probability-value">${item.probability}%</span>
+            </div>
+        `;
+        
+        container.appendChild(itemDiv);
+    });
+}
+
+// ===== Reset Probabilities =====
+function resetProbabilities() {
+    bigramList.innerHTML = '<div class="no-data">Waiting for input...</div>';
+    trigramList.innerHTML = '<div class="no-data">Requires at least 2 words</div>';
+    bigramWordSpan.textContent = '';
+    trigramContextSpan.textContent = '';
+}
+
+// ===== Utility Functions =====
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ===== Initialize =====
+console.log('✓ AI Word Generator initialized');

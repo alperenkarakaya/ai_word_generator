@@ -1,0 +1,103 @@
+<! DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Word Generator - N-gram Predictor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <h1 class="app-title">
+                    <span class="icon">🤖</span>
+                    <span>AI Word Generator</span>
+                </h1>
+                <p class="app-subtitle">N-gram Based Intelligent Text Prediction</p>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Editor Section -->
+            <section class="editor-section">
+                <div class="editor-container">
+                    <div class="editor-wrapper">
+                        <div id="ghost-input" class="editor-layer ghost-layer"></div>
+                        <textarea 
+                            id="user-input" 
+                            class="editor-layer user-layer" 
+                            placeholder="Yazmaya başla..."
+                            spellcheck="false"
+                            autofocus
+                        ></textarea>
+                    </div>
+                    <div class="editor-hint">
+                        <span>Tamamlama için <kbd>TAB</kbd> | 2-gram ve 3-gram olasılıkları aşağıda</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Probabilities Section -->
+            <section class="probabilities-section" id="probabilities-section">
+                <div class="section-header">
+                    <h2 class="section-title">📊 Tahmin Olasılıkları</h2>
+                    <p class="section-description">Gerçek zamanlı kelime tahmin analizi</p>
+                </div>
+
+                <div id="probabilities-container" class="probabilities-grid">
+                    <!-- 2-GRAM Box -->
+                    <div class="probability-card bigram-card">
+                        <div class="card-header">
+                            <div class="header-left">
+                                <span class="gram-badge bigram-badge">2-GRAM</span>
+                                <span class="card-title">Bigram Model</span>
+                            </div>
+                            <span class="context-label">Bağlam:  "<span id="bigram-word" class="context-word">-</span>"</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="bigram-list" class="predictions-list">
+                                <div class="no-data">Yazmaya başlayın...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3-GRAM Box -->
+                    <div class="probability-card trigram-card">
+                        <div class="card-header">
+                            <div class="header-left">
+                                <span class="gram-badge trigram-badge">3-GRAM</span>
+                                <span class="card-title">Trigram Model</span>
+                            </div>
+                            <span class="context-label">Bağlam: "<span id="trigram-context" class="context-word">-</span>"</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="trigram-list" class="predictions-list">
+                                <div class="no-data">En az 2 kelime gerekli</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Info Banner -->
+                <div class="info-banner">
+                    <span class="info-icon">💡</span>
+                    <span class="info-text">
+                        <strong>2-gram: </strong> Son 1 kelimeye bakar | 
+                        <strong>3-gram:</strong> Son 2 kelimeye bakar (daha akıllı!)
+                    </span>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>N-gram Dil Modeli ile Güçlendirilmiştir • Flask & Vanilla JS ile Geliştirildi</p>
+        </footer>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>
