@@ -1,4 +1,4 @@
-<! DOCTYPE html>
+<!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
@@ -12,10 +12,9 @@
         <header class="app-header">
             <div class="header-content">
                 <h1 class="app-title">
-                    <span class="icon">🤖</span>
                     <span>AI Word Generator</span>
                 </h1>
-                <p class="app-subtitle">N-gram Based Intelligent Text Prediction</p>
+                <p class="app-subtitle">N-gram Tabanlı Akıllı Metin Tahmini</p>
             </div>
         </header>
 
@@ -35,7 +34,7 @@
                         ></textarea>
                     </div>
                     <div class="editor-hint">
-                        <span>Tamamlama için <kbd>TAB</kbd> | 2-gram ve 3-gram olasılıkları aşağıda</span>
+                        <span>Tamamlama için <kbd>TAB</kbd> tuşuna basın</span>
                     </div>
                 </div>
             </section>
@@ -43,11 +42,27 @@
             <!-- Probabilities Section -->
             <section class="probabilities-section" id="probabilities-section">
                 <div class="section-header">
-                    <h2 class="section-title">📊 Tahmin Olasılıkları</h2>
-                    <p class="section-description">Gerçek zamanlı kelime tahmin analizi</p>
+                    <h2 class="section-title">Kelime Tahmin Olasılıkları</h2>
+                    <p class="section-description">3 farklı model ile gerçek zamanlı analiz</p>
                 </div>
 
                 <div id="probabilities-container" class="probabilities-grid">
+                    <!-- 1-GRAM Box -->
+                    <div class="probability-card unigram-card">
+                        <div class="card-header">
+                            <div class="header-left">
+                                <span class="gram-badge unigram-badge">1-GRAM</span>
+                                <span class="card-title">Unigram Model</span>
+                            </div>
+                            <span class="context-label">Genel frekans</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="unigram-list" class="predictions-list">
+                                <div class="no-data">Yazmaya başlayın...</div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 2-GRAM Box -->
                     <div class="probability-card bigram-card">
                         <div class="card-header">
@@ -59,7 +74,7 @@
                         </div>
                         <div class="card-body">
                             <div id="bigram-list" class="predictions-list">
-                                <div class="no-data">Yazmaya başlayın...</div>
+                                <div class="no-data">En az 1 kelime gerekli</div>
                             </div>
                         </div>
                     </div>
@@ -85,8 +100,9 @@
                 <div class="info-banner">
                     <span class="info-icon">💡</span>
                     <span class="info-text">
-                        <strong>2-gram: </strong> Son 1 kelimeye bakar | 
-                        <strong>3-gram:</strong> Son 2 kelimeye bakar (daha akıllı!)
+                        <strong>1-gram: </strong> Genel kelime sıklığı | 
+                        <strong>2-gram:</strong> Son 1 kelimeye bakar | 
+                        <strong>3-gram:</strong> Son 2 kelimeye bakar (en akıllı!)
                     </span>
                 </div>
             </section>
@@ -94,7 +110,7 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>N-gram Dil Modeli ile Güçlendirilmiştir • Flask & Vanilla JS ile Geliştirildi</p>
+            <p>N-gram Dil Modeli • Flask & Vanilla JS ile Geliştirildi</p>
         </footer>
     </div>
 

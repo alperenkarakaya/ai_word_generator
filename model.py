@@ -4,15 +4,17 @@ import re
 import random
 
 
-class TrigramPredictor:
+class NgramPredictor:
     """
-    2-gram ve 3-gram tabanlı kelime tahmin modeli. 
+    1-gram, 2-gram ve 3-gram tabanlı kelime tahmin modeli. 
     """
     
     def __init__(self, filename):
         self.word_counts = Counter()
+        self.unigram_counts = Counter()  # 1-gram (kelime frekansları)
         self.bigram_counts = defaultdict(Counter)
         self.trigram_counts = defaultdict(Counter)
+        self.total_words = 0
         self.load_data(filename)
 
     def load_data(self, filename):
@@ -30,6 +32,10 @@ class TrigramPredictor:
         
         # Kelime frekansları
         self.word_counts = Counter(words)
+        self.total_words = len(words)
+        
+        # 1-gram (unigram) - Genel kelime olasılıkları
+        self.unigram_counts = self.word_counts.copy()
         
         # 2-gram (bigram) oluştur
         for i in range(len(words) - 1):
@@ -46,32 +52,52 @@ class TrigramPredictor:
         
         print(f"✓ Model yüklendi")
         print(f"  - Benzersiz kelime:  {len(self.word_counts)}")
+        print(f"  - Toplam kelime:  {self.total_words}")
         print(f"  - 2-gram sayısı: {len(self. bigram_counts)}")
         print(f"  - 3-gram sayısı: {len(self.trigram_counts)}")
 
     def get_probabilities(self, full_text):
         """
-        Verilen metin için 2-gram ve 3-gram olasılıklarını hesaplar.
+        Verilen metin için 1-gram, 2-gram ve 3-gram olasılıklarını hesaplar.
         """
-        if not full_text: 
-            return {"bigram": [], "trigram":  [], "current_word": "", "context": ""}
+        if not full_text:  
+            # Boş metin - sadece 1-gram göster
+            unigram_probs = self._format_probabilities(self.unigram_counts, use_total=True)
+            return {
+                "unigram": unigram_probs,
+                "bigram":  [],
+                "trigram": [],
+                "current_word": "",
+                "context":  ""
+            }
 
         words_list = full_text.split()
         
         # Şu anki kelimeyi belirle (TAMAMLAMA YAPMA!)
         if full_text.endswith(" "):
             if len(words_list) < 1:
-                return {"bigram":  [], "trigram": [], "current_word": "", "context": ""}
+                unigram_probs = self._format_probabilities(self.unigram_counts, use_total=True)
+                return {
+                    "unigram": unigram_probs,
+                    "bigram": [],
+                    "trigram": [],
+                    "current_word": "",
+                    "context": ""
+                }
             current_word = words_list[-1]. lower()
         else:
-            current_word = words_list[-1]. lower()
+            current_word = words_list[-1].lower()
         
         result = {
+            "unigram": [],
             "bigram": [],
             "trigram": [],
             "current_word": current_word,
-            "context": ""
+            "context":  ""
         }
+        
+        # 1-GRAM (UNIGRAM) olasılıkları - Genel kelime frekansları
+        result["unigram"] = self._format_probabilities(self.unigram_counts, use_total=True)
         
         # 2-GRAM olasılıkları
         bigram_candidates = self.bigram_counts. get(current_word)
@@ -96,9 +122,17 @@ class TrigramPredictor:
         
         return result
 
-    def _format_probabilities(self, candidates):
+    def _format_probabilities(self, candidates, use_total=False):
         """Olasılıkları yüzde olarak formatlar ve sıralar."""
-        total = sum(candidates.values())
+        if use_total:
+            # 1-gram için toplam kelime sayısını kullan
+            total = self.total_words
+        else:
+            total = sum(candidates.values())
+        
+        if total == 0:
+            return []
+            
         probabilities = [
             {
                 "word": word,
@@ -108,11 +142,11 @@ class TrigramPredictor:
             for word, count in candidates.items()
         ]
         probabilities.sort(key=lambda x: x["probability"], reverse=True)
-        return probabilities[: 5]  # En fazla 5 kelime
+        return probabilities[:5]  # En fazla 5 kelime
 
     def predict(self, full_text):
         """
-        Kelime tamamlama ve sonraki kelime önerisi. 
+        Kelime tamamlama + sonraki kelime önerisi. 
         """
         if not full_text or full_text.endswith(" "):
             return ""
@@ -121,7 +155,7 @@ class TrigramPredictor:
         current_partial = words_list[-1].lower()
         
         # Kelime tamamlama
-        matches = [w for w in self.word_counts if w. startswith(current_partial)]
+        matches = [w for w in self.word_counts if w.startswith(current_partial)]
         if not matches:
             return ""
 

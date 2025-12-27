@@ -1,26 +1,26 @@
 /* ===== Reset & Base ===== */
 * {
     margin: 0;
-    padding: 0;
+    padding:  0;
     box-sizing: border-box;
 }
 
 :root {
     /* Colors */
     --bg-primary: #1a1d23;
-    --bg-secondary:  #252930;
-    --bg-tertiary: #2f3541;
+    --bg-secondary: #252930;
+    --bg-tertiary:  #2f3541;
     --text-primary: #e8eaed;
     --text-secondary: #9aa0a6;
     --text-ghost: #5f6368;
     --accent-primary: #8ab4f8;
     --accent-secondary: #4285f4;
-    --bigram-color: #f5576c;
+    --unigram-color: #34a853;
+    --bigram-color:  #f5576c;
     --trigram-color: #00f2fe;
-    --success-color: #34a853;
     
     /* Spacing */
-    --spacing-xs:  8px;
+    --spacing-xs: 8px;
     --spacing-sm: 12px;
     --spacing-md: 16px;
     --spacing-lg: 24px;
@@ -39,7 +39,7 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-    background: linear-gradient(135deg, #1a1d23 0%, #252930 100%);
+    background:  linear-gradient(135deg, #1a1d23 0%, #252930 100%);
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.6;
@@ -47,7 +47,7 @@ body {
 
 /* ===== App Container ===== */
 .app-container {
-    max-width:  1400px;
+    max-width:  1600px;
     margin: 0 auto;
     padding: var(--spacing-lg);
 }
@@ -55,19 +55,19 @@ body {
 /* ===== Header ===== */
 .app-header {
     text-align: center;
-    padding: var(--spacing-xl) 0;
-    margin-bottom: var(--spacing-xl);
+    padding: var(--spacing-lg) 0;
+    margin-bottom: var(--spacing-lg);
     border-bottom: 2px solid var(--bg-tertiary);
 }
 
 .header-content {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-sm);
+    gap: var(--spacing-xs);
 }
 
 .app-title {
-    font-size: 2.5rem;
+    font-size: 2.2rem;
     font-weight: 700;
     background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
     -webkit-background-clip: text;
@@ -76,25 +76,25 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: var(--spacing-md);
+    gap:  var(--spacing-md);
 }
 
 .icon {
-    font-size: 2. 5rem;
-    -webkit-text-fill-color:  initial;
+    font-size: 2.2rem;
+    -webkit-text-fill-color: initial;
 }
 
 .app-subtitle {
-    font-size: 1rem;
+    font-size: 0.95rem;
     color: var(--text-secondary);
     letter-spacing: 0.5px;
 }
 
 /* ===== Main Content ===== */
 .main-content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-xl);
+    display:  flex;
+    flex-direction:  column;
+    gap: var(--spacing-lg);
 }
 
 /* ===== Editor Section ===== */
@@ -104,7 +104,7 @@ body {
 
 .editor-container {
     background: var(--bg-secondary);
-    border-radius: var(--radius-lg);
+    border-radius:  var(--radius-lg);
     padding: var(--spacing-lg);
     box-shadow: var(--shadow-md);
 }
@@ -112,21 +112,21 @@ body {
 .editor-wrapper {
     position: relative;
     width: 100%;
-    min-height: 200px;
+    min-height: 300px;
 }
 
 .editor-layer {
     font-family: 'Courier New', 'Consolas', monospace;
-    font-size: 18px;
+    font-size: 20px;
     line-height:  1.8;
     padding: var(--spacing-lg);
     border-radius: var(--radius-md);
     border: 2px solid var(--bg-tertiary);
     width: 100%;
-    min-height: 200px;
+    min-height: 300px;
     resize: vertical;
     background:  transparent;
-    white-space: pre-wrap;
+    white-space:  pre-wrap;
     word-wrap: break-word;
     overflow-wrap: break-word;
 }
@@ -154,12 +154,12 @@ body {
 }
 
 .user-layer:focus {
-    border-color: var(--accent-primary);
+    border-color:  var(--accent-primary);
     background: rgba(47, 53, 65, 0.7);
 }
 
 .user-layer::placeholder {
-    color: var(--text-secondary);
+    color:  var(--text-secondary);
     opacity: 0.5;
 }
 
@@ -173,11 +173,11 @@ body {
 kbd {
     background: var(--bg-tertiary);
     padding: 4px 10px;
-    border-radius:  var(--radius-sm);
+    border-radius: var(--radius-sm);
     border: 1px solid var(--text-ghost);
     font-family: inherit;
     font-size: 0.85rem;
-    font-weight:  600;
+    font-weight: 600;
     color: var(--accent-primary);
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
@@ -193,21 +193,21 @@ kbd {
 }
 
 .section-title {
-    font-size: 1.8rem;
+    font-size: 1.6rem;
     font-weight: 700;
     margin-bottom: var(--spacing-xs);
     color: var(--text-primary);
 }
 
 .section-description {
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: var(--text-secondary);
 }
 
 .probabilities-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
-    gap: var(--spacing-lg);
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: var(--spacing-md);
     margin-bottom: var(--spacing-lg);
 }
 
@@ -215,7 +215,7 @@ kbd {
 .probability-card {
     background: var(--bg-secondary);
     border-radius: var(--radius-lg);
-    padding: var(--spacing-lg);
+    padding: var(--spacing-md);
     box-shadow: var(--shadow-md);
     transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
@@ -229,11 +229,11 @@ kbd {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
     border-bottom: 2px solid var(--bg-tertiary);
-    margin-bottom: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
     flex-wrap: wrap;
-    gap: var(--spacing-sm);
+    gap: var(--spacing-xs);
 }
 
 .header-left {
@@ -243,33 +243,38 @@ kbd {
 }
 
 .gram-badge {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 800;
-    padding: 6px 12px;
+    padding: 5px 10px;
     border-radius: 20px;
     text-transform: uppercase;
     letter-spacing: 1px;
     box-shadow: var(--shadow-sm);
 }
 
+.unigram-badge {
+    background:  linear-gradient(135deg, #52c234 0%, var(--unigram-color) 100%);
+    color: white;
+}
+
 .bigram-badge {
-    background:  linear-gradient(135deg, #f093fb 0%, var(--bigram-color) 100%);
+    background: linear-gradient(135deg, #f093fb 0%, var(--bigram-color) 100%);
     color: white;
 }
 
 .trigram-badge {
-    background:  linear-gradient(135deg, #4facfe 0%, var(--trigram-color) 100%);
+    background: linear-gradient(135deg, #4facfe 0%, var(--trigram-color) 100%);
     color: white;
 }
 
 .card-title {
-    font-size: 1rem;
-    font-weight: 600;
+    font-size: 0.9rem;
+    font-weight:  600;
     color: var(--text-primary);
 }
 
 .context-label {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: var(--text-secondary);
 }
 
@@ -280,21 +285,21 @@ kbd {
 }
 
 .card-body {
-    min-height: 150px;
+    min-height: 200px;
 }
 
 /* ===== Predictions List ===== */
 .predictions-list {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-sm);
+    gap:  var(--spacing-xs);
 }
 
 .prediction-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-sm);
     background: rgba(138, 180, 248, 0.08);
     border-radius: var(--radius-md);
     transition: all 0.2s ease;
@@ -304,7 +309,7 @@ kbd {
 .prediction-item:hover {
     background: rgba(138, 180, 248, 0.15);
     transform: translateX(6px);
-    border-left-color: var(--accent-primary);
+    border-left-color:  var(--accent-primary);
 }
 
 .prediction-item.top-choice {
@@ -321,17 +326,17 @@ kbd {
 .word-rank {
     background: var(--bg-tertiary);
     color: var(--text-secondary);
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     font-weight: 700;
-    padding: 4px 8px;
+    padding: 3px 7px;
     border-radius: var(--radius-sm);
-    min-width: 28px;
+    min-width: 26px;
     text-align: center;
 }
 
 .word-text {
     font-family: 'Courier New', monospace;
-    font-size:  1rem;
+    font-size: 0.95rem;
     font-weight: 600;
     color: var(--text-primary);
 }
@@ -339,13 +344,13 @@ kbd {
 .probability-info {
     display: flex;
     align-items: center;
-    gap: var(--spacing-sm);
-    min-width: 180px;
+    gap: var(--spacing-xs);
+    min-width: 150px;
 }
 
 .probability-bar-container {
     flex: 1;
-    height:  8px;
+    height: 7px;
     background: var(--bg-tertiary);
     border-radius: 4px;
     overflow: hidden;
@@ -359,26 +364,26 @@ kbd {
 }
 
 .probability-value {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     font-weight: 700;
     color: var(--accent-primary);
-    min-width: 48px;
+    min-width: 45px;
     text-align: right;
 }
 
 .no-data {
     text-align: center;
-    padding: var(--spacing-xl);
+    padding: var(--spacing-lg);
     color: var(--text-secondary);
     font-style: italic;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 /* ===== Info Banner ===== */
 .info-banner {
     background: rgba(138, 180, 248, 0.1);
     border: 1px solid rgba(138, 180, 248, 0.3);
-    border-radius: var(--radius-md);
+    border-radius:  var(--radius-md);
     padding: var(--spacing-md);
     display: flex;
     align-items: center;
@@ -392,7 +397,7 @@ kbd {
 }
 
 .info-text {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     color: var(--text-secondary);
 }
 
@@ -404,35 +409,40 @@ kbd {
 /* ===== Footer ===== */
 .app-footer {
     text-align: center;
-    padding: var(--spacing-xl) 0;
-    margin-top: var(--spacing-xl);
+    padding: var(--spacing-lg) 0;
+    margin-top: var(--spacing-lg);
     border-top: 2px solid var(--bg-tertiary);
     color: var(--text-secondary);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
 }
 
 /* ===== Responsive Design ===== */
-@media (max-width:  1024px) {
+@media (max-width: 1200px) {
     .probabilities-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     }
 }
 
 @media (max-width: 768px) {
     .app-title {
-        font-size: 2rem;
+        font-size: 1.8rem;
     }
     
     .section-title {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
     }
     
     .editor-layer {
         font-size: 16px;
+        min-height: 250px;
     }
     
     .card-header {
         flex-direction: column;
         align-items: flex-start;
+    }
+    
+    .probabilities-grid {
+        grid-template-columns: 1fr;
     }
 }
