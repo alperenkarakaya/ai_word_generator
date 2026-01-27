@@ -7,17 +7,17 @@
 
 :root {
     /* Colors */
-    --bg-primary: #1a1d23;
-    --bg-secondary: #252930;
-    --bg-tertiary:  #2f3541;
-    --text-primary: #e8eaed;
-    --text-secondary: #9aa0a6;
-    --text-ghost: #5f6368;
-    --accent-primary: #8ab4f8;
-    --accent-secondary: #4285f4;
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8f9fa;
+    --bg-tertiary:  #e9ecef;
+    --text-primary: #1a1d23;
+    --text-secondary: #495057;
+    --text-ghost: #999999;
+    --accent-primary: #4285f4;
+    --accent-secondary: #1967d2;
     --unigram-color: #34a853;
     --bigram-color:  #f5576c;
-    --trigram-color: #00f2fe;
+    --trigram-color: #00b0ff;
     
     /* Spacing */
     --spacing-xs: 8px;
@@ -32,14 +32,14 @@
     --radius-lg: 14px;
     
     /* Shadows */
-    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.15);
-    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.2);
-    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.3);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
 }
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
-    background:  linear-gradient(135deg, #1a1d23 0%, #252930 100%);
+    background:  linear-gradient(135deg, #ffffff 0%, #f0f4f8 100%);
     color: var(--text-primary);
     min-height: 100vh;
     line-height: 1.6;
@@ -148,14 +148,14 @@ body {
     position: relative;
     z-index: 2;
     color: var(--text-primary);
-    background: rgba(47, 53, 65, 0.5);
+    background: rgba(255, 255, 255, 0.3);
     outline: none;
     transition: border-color 0.3s ease;
 }
 
 .user-layer:focus {
     border-color:  var(--accent-primary);
-    background: rgba(47, 53, 65, 0.7);
+    background: rgba(255, 255, 255, 0.5);
 }
 
 .user-layer::placeholder {
@@ -300,20 +300,20 @@ kbd {
     align-items: center;
     justify-content: space-between;
     padding: var(--spacing-sm) var(--spacing-sm);
-    background: rgba(138, 180, 248, 0.08);
+    background: rgba(66, 133, 244, 0.05);
     border-radius: var(--radius-md);
     transition: all 0.2s ease;
     border-left: 3px solid transparent;
 }
 
 .prediction-item:hover {
-    background: rgba(138, 180, 248, 0.15);
+    background: rgba(66, 133, 244, 0.1);
     transform: translateX(6px);
     border-left-color:  var(--accent-primary);
 }
 
 .prediction-item.top-choice {
-    background: rgba(138, 180, 248, 0.15);
+    background: rgba(66, 133, 244, 0.12);
     border-left-color: var(--accent-primary);
 }
 
@@ -381,8 +381,8 @@ kbd {
 
 /* ===== Info Banner ===== */
 .info-banner {
-    background: rgba(138, 180, 248, 0.1);
-    border: 1px solid rgba(138, 180, 248, 0.3);
+    background: rgba(66, 133, 244, 0.08);
+    border: 1px solid rgba(66, 133, 244, 0.2);
     border-radius:  var(--radius-md);
     padding: var(--spacing-md);
     display: flex;

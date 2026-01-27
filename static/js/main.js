@@ -12,7 +12,7 @@ let currentSuggestion = "";
 let debounceTimer = null;
 
 // ===== Event Listeners =====
-inputField. addEventListener('input', handleInput);
+inputField.addEventListener('input', handleInput);
 inputField.addEventListener('keydown', handleKeydown);
 inputField.addEventListener('scroll', handleScroll);
 
@@ -20,7 +20,7 @@ inputField.addEventListener('scroll', handleScroll);
 window.addEventListener('DOMContentLoaded', () => {
     updateProbabilities({unigram: [], bigram: [], trigram: [], current_word: "", context: ""}, "");
     // Boş metin ile 1-gram verilerini al
-    fetch('/probabilities? text=')
+    fetch('/probabilities?text=')
         .then(response => response.json())
         .then(data => updateProbabilities(data, ""))
         .catch(error => console.error('Initial load error:', error));
@@ -40,18 +40,18 @@ async function handleInput() {
                 const response = await fetch(`/predict?text=${encodeURIComponent(text)}`);
                 const data = await response.json();
                 currentSuggestion = data.prediction || "";
-                
+
                 if (currentSuggestion) {
                     ghostField.textContent = text + currentSuggestion;
                 } else {
-                    ghostField. textContent = "";
+                    ghostField.textContent = "";
                 }
             } catch (error) {
                 console.error('Prediction error:', error);
                 ghostField.textContent = "";
             }
         } else {
-            ghostField. textContent = "";
+            ghostField.textContent = "";
             currentSuggestion = "";
         }
         
@@ -121,7 +121,7 @@ function renderPredictions(container, predictions) {
     predictions.forEach((item, index) => {
         const itemDiv = document.createElement('div');
         itemDiv.className = `prediction-item${index === 0 ? ' top-choice' : ''}`;
-        
+
         itemDiv.innerHTML = `
             <div class="word-info">
                 <span class="word-rank">#${index + 1}</span>
@@ -129,12 +129,12 @@ function renderPredictions(container, predictions) {
             </div>
             <div class="probability-info">
                 <div class="probability-bar-container">
-                    <div class="probability-bar" style="width: ${item. probability}%"></div>
+                    <div class="probability-bar" style="width: ${item.probability}%"></div>
                 </div>
                 <span class="probability-value">${item.probability}%</span>
             </div>
         `;
-        
+
         container.appendChild(itemDiv);
     });
 }
