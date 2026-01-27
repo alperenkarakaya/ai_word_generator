@@ -68,11 +68,31 @@ async function handleInput() {
 
 // ===== Keydown Handler =====
 function handleKeydown(e) {
-    if (e.key === 'Tab') {
+    // Tab tuşu - Kelime tamamlama
+    if (e.key === 'Tab' && !e.shiftKey) {
         e.preventDefault();
         if (currentSuggestion) {
             this.value += currentSuggestion + " ";
             this.dispatchEvent(new Event('input'));
+        }
+    }
+    
+    // Shift+Tab - Cümle tamamlama (bir sonraki noktalama işaretine kadar)
+    if (e.key === 'Tab' && e.shiftKey) {
+        e.preventDefault();
+        const text = this.value;
+        
+        if (text.length > 0) {
+            // API'den cümle tamamlama iste
+            fetch(`/predict_sentence?text=${encodeURIComponent(text)}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.completion) {
+                        this.value += data.completion;
+                        this.dispatchEvent(new Event('input'));
+                    }
+                })
+                .catch(error => console.error('Sentence completion error:', error));
         }
     }
 }

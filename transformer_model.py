@@ -1,335 +1,292 @@
 """
-Mini Transformer modeli (GPT-style, decoder-only)
-Türkçe metin üretimi için optimize edilmiş
+LSTM Tabanlı Dil Modeli
+Karakter seviyesinde çalışır ve N-gram'dan çok daha iyi sonuç verir
 """
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import math
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import pickle
+import os
+import random
+from text_utils import full_clean, restore_punctuation_from_tokens
 
 
-class TransformerConfig:
-    """Transformer model konfigürasyonu."""
-    def __init__(
-        self,
-        vocab_size: int = 1000,
-        d_model: int = 256,
-        n_heads: int = 4,
-        n_layers: int = 3,
-        d_ff: int = 1024,
-        max_seq_length: int = 512,
-        dropout: float = 0.1,
-    ):
-        self.vocab_size = vocab_size
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.n_layers = n_layers
-        self.d_ff = d_ff
-        self.max_seq_length = max_seq_length
-        self.dropout = dropout
+class CharDataset(Dataset):
+    """Karakter bazlı dataset"""
+    def __init__(self, text, seq_length=100):
+        self.text = text
+        self.seq_length = seq_length
+        
+        # Karakter sözlüğü oluştur
+        self.chars = sorted(list(set(text)))
+        self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
+        self.idx_to_char = {i: ch for i, ch in enumerate(self.chars)}
+        self.vocab_size = len(self.chars)
+        
+    def __len__(self):
+        return len(self.text) - self.seq_length
+    
+    def __getitem__(self, idx):
+        # Sequence ve target
+        chunk = self.text[idx:idx + self.seq_length + 1]
+        
+        # Karakterleri index'e çevir
+        input_seq = [self.char_to_idx[ch] for ch in chunk[:-1]]
+        target_seq = [self.char_to_idx[ch] for ch in chunk[1:]]
+        
+        return torch.tensor(input_seq), torch.tensor(target_seq)
 
 
-class PositionalEncoding(nn.Module):
-    """Sinüzoidal pozisyonel encoding."""
-    
-    def __init__(self, d_model: int, max_len: int = 5000):
-        super().__init__()
+class LSTMLanguageModel(nn.Module):
+    """LSTM Tabanlı Language Model"""
+    def __init__(self, vocab_size, embedding_dim=128, hidden_dim=256, num_layers=2):
+        super(LSTMLanguageModel, self).__init__()
         
-        # Pozisyon encodinglari hesapla
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
         
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
+        # Embedding layer
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
         
-        pe = pe.unsqueeze(0)  # (1, max_len, d_model)
-        self.register_buffer('pe', pe)
-    
-    def forward(self, x):
-        """
-        Args:
-            x: (batch_size, seq_len, d_model)
-        Returns:
-            (batch_size, seq_len, d_model)
-        """
-        return x + self.pe[:, :x.size(1), :]
-
-
-class MultiHeadAttention(nn.Module):
-    """Multi-head self-attention."""
-    
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1):
-        super().__init__()
-        assert d_model % n_heads == 0
+        # LSTM layer
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers, 
+                           batch_first=True, dropout=0.2)
         
-        self.d_model = d_model
-        self.n_heads = n_heads
-        self.d_k = d_model // n_heads
+        # Output layer
+        self.fc = nn.Linear(hidden_dim, vocab_size)
         
-        self.W_q = nn.Linear(d_model, d_model)
-        self.W_k = nn.Linear(d_model, d_model)
-        self.W_v = nn.Linear(d_model, d_model)
-        self.W_o = nn.Linear(d_model, d_model)
+    def forward(self, x, hidden=None):
+        # Embedding
+        embeds = self.embedding(x)
         
-        self.dropout = nn.Dropout(dropout)
-    
-    def forward(self, x, mask=None):
-        """
-        Args:
-            x: (batch_size, seq_len, d_model)
-            mask: (batch_size, seq_len, seq_len) - causal mask
-        Returns:
-            (batch_size, seq_len, d_model)
-        """
-        batch_size, seq_len, _ = x.size()
-        
-        # Linear projections ve head'lere böl
-        Q = self.W_q(x).view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
-        K = self.W_k(x).view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
-        V = self.W_v(x).view(batch_size, seq_len, self.n_heads, self.d_k).transpose(1, 2)
-        
-        # Scaled dot-product attention
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
-        
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, float('-inf'))
-        
-        attn = F.softmax(scores, dim=-1)
-        attn = self.dropout(attn)
-        
-        out = torch.matmul(attn, V)
-        
-        # Concat heads
-        out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.d_model)
-        out = self.W_o(out)
-        
-        return out
-
-
-class FeedForward(nn.Module):
-    """Position-wise feed-forward network."""
-    
-    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
-        super().__init__()
-        self.linear1 = nn.Linear(d_model, d_ff)
-        self.linear2 = nn.Linear(d_ff, d_model)
-        self.dropout = nn.Dropout(dropout)
-    
-    def forward(self, x):
-        """
-        Args:
-            x: (batch_size, seq_len, d_model)
-        Returns:
-            (batch_size, seq_len, d_model)
-        """
-        return self.linear2(self.dropout(F.gelu(self.linear1(x))))
-
-
-class TransformerBlock(nn.Module):
-    """Tek bir Transformer decoder bloğu."""
-    
-    def __init__(self, config: TransformerConfig):
-        super().__init__()
-        self.attention = MultiHeadAttention(config.d_model, config.n_heads, config.dropout)
-        self.feed_forward = FeedForward(config.d_model, config.d_ff, config.dropout)
-        
-        self.ln1 = nn.LayerNorm(config.d_model)
-        self.ln2 = nn.LayerNorm(config.d_model)
-        
-        self.dropout = nn.Dropout(config.dropout)
-    
-    def forward(self, x, mask=None):
-        """
-        Args:
-            x: (batch_size, seq_len, d_model)
-            mask: Causal mask
-        Returns:
-            (batch_size, seq_len, d_model)
-        """
-        # Self-attention + residual
-        attn_out = self.attention(self.ln1(x), mask)
-        x = x + self.dropout(attn_out)
-        
-        # Feed-forward + residual
-        ff_out = self.feed_forward(self.ln2(x))
-        x = x + self.dropout(ff_out)
-        
-        return x
-
-
-class TurkishGPT(nn.Module):
-    """
-    Mini GPT-style Transformer model.
-    Türkçe metin üretimi için.
-    """
-    
-    def __init__(self, config: TransformerConfig):
-        super().__init__()
-        self.config = config
-        
-        # Embeddings
-        self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
-        self.pos_encoding = PositionalEncoding(config.d_model, config.max_seq_length)
-        
-        # Transformer blocks
-        self.blocks = nn.ModuleList([
-            TransformerBlock(config) for _ in range(config.n_layers)
-        ])
-        
-        # Output projection
-        self.ln_f = nn.LayerNorm(config.d_model)
-        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-        
-        self.dropout = nn.Dropout(config.dropout)
-        
-        # Initialize weights
-        self.apply(self._init_weights)
-    
-    def _init_weights(self, module):
-        """Xavier/Kaiming initialization."""
-        if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-    
-    def _create_causal_mask(self, seq_len, device):
-        """
-        Causal mask oluştur (sonraki tokenlara bakamaz).
-        
-        Returns:
-            (1, 1, seq_len, seq_len)
-        """
-        mask = torch.tril(torch.ones(seq_len, seq_len, device=device))
-        return mask.unsqueeze(0).unsqueeze(0)
-    
-    def forward(self, input_ids, targets=None):
-        """
-        Args:
-            input_ids: (batch_size, seq_len)
-            targets: (batch_size, seq_len) - eğitim için
-        Returns:
-            logits: (batch_size, seq_len, vocab_size)
-            loss: scalar (eğer targets verilmişse)
-        """
-        batch_size, seq_len = input_ids.size()
-        
-        # Embeddings
-        x = self.token_embedding(input_ids)  # (batch, seq_len, d_model)
-        x = self.pos_encoding(x)
-        x = self.dropout(x)
-        
-        # Causal mask
-        mask = self._create_causal_mask(seq_len, input_ids.device)
-        
-        # Transformer blocks
-        for block in self.blocks:
-            x = block(x, mask)
+        # LSTM
+        lstm_out, hidden = self.lstm(embeds, hidden)
         
         # Output
-        x = self.ln_f(x)
-        logits = self.lm_head(x)  # (batch, seq_len, vocab_size)
+        output = self.fc(lstm_out)
         
-        # Loss hesapla (eğer targets varsa)
-        loss = None
-        if targets is not None:
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                targets.view(-1),
-                ignore_index=0  # PAD token
-            )
-        
-        return logits, loss
+        return output, hidden
     
-    @torch.no_grad()
-    def generate(
-        self,
-        input_ids,
-        max_new_tokens=50,
-        temperature=1.0,
-        top_k=None,
-        top_p=None,
-    ):
-        """
-        Metin üret (autoregressive).
+    def init_hidden(self, batch_size, device):
+        """Hidden state başlat"""
+        return (torch.zeros(self.num_layers, batch_size, self.hidden_dim).to(device),
+                torch.zeros(self.num_layers, batch_size, self.hidden_dim).to(device))
+
+
+class TransformerPredictor:
+    """Transformer/LSTM Model Wrapper"""
+    def __init__(self, model_path=None):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.model = None
+        self.dataset = None
+        self.char_to_idx = None
+        self.idx_to_char = None
+        self.vocab_size = 0
         
-        Args:
-            input_ids: (batch_size, seq_len) - başlangıç tokenları
-            max_new_tokens: Kaç token üretilecek
-            temperature: Sampling sıcaklığı
-            top_k: Top-k sampling
-            top_p: Nucleus sampling
-            
-        Returns:
-            (batch_size, seq_len + max_new_tokens)
-        """
-        for _ in range(max_new_tokens):
-            # Model forward
-            logits, _ = self.forward(input_ids)
-            
-            # Sadece son tokenin logit'lerini al
-            logits = logits[:, -1, :] / temperature
-            
-            # Top-k filtering
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = float('-inf')
-            
-            # Top-p (nucleus) filtering
-            if top_p is not None:
-                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-                
-                # İlk top_p'ye ulaşan indexleri bul
-                sorted_indices_to_remove = cumulative_probs > top_p
-                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                sorted_indices_to_remove[..., 0] = 0
-                
-                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                logits[indices_to_remove] = float('-inf')
-            
-            # Sample
-            probs = F.softmax(logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)
-            
-            # Append
-            input_ids = torch.cat([input_ids, next_token], dim=1)
+        if model_path and os.path.exists(model_path):
+            self.load_model(model_path)
+    
+    def train(self, text_file, seq_length=100, embedding_dim=128, 
+              hidden_dim=256, num_layers=2, epochs=10, batch_size=64, 
+              learning_rate=0.001, save_path='lstm_model.pth'):
+        """Modeli eğit"""
+        print(f"📚 Eğitim başlıyor...")
+        print(f"   Device: {self.device}")
         
-        return input_ids
+        # Veriyi yükle ve temizle
+        with open(text_file, 'r', encoding='utf-8') as f:
+            text = f.read()
+        
+        print(f"   Metin uzunluğu: {len(text):,} karakter")
+        
+        # Dataset oluştur
+        self.dataset = CharDataset(text, seq_length)
+        self.char_to_idx = self.dataset.char_to_idx
+        self.idx_to_char = self.dataset.idx_to_char
+        self.vocab_size = self.dataset.vocab_size
+        
+        print(f"   Vocabulary boyutu: {self.vocab_size}")
+        print(f"   Sequence uzunluğu: {seq_length}")
+        
+        # DataLoader
+        dataloader = DataLoader(self.dataset, batch_size=batch_size, 
+                               shuffle=True, num_workers=0)
+        
+        # Model oluştur
+        self.model = LSTMLanguageModel(
+            self.vocab_size, embedding_dim, hidden_dim, num_layers
+        ).to(self.device)
+        
+        # Loss ve optimizer
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=learning_rate)
+        
+        # Eğitim döngüsü
+        self.model.train()
+        
+        for epoch in range(epochs):
+            total_loss = 0
+            for batch_idx, (inputs, targets) in enumerate(dataloader):
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
+                
+                # Forward
+                optimizer.zero_grad()
+                outputs, _ = self.model(inputs)
+                
+                # Loss hesapla (reshape gerekli)
+                loss = criterion(outputs.reshape(-1, self.vocab_size), 
+                               targets.reshape(-1))
+                
+                # Backward
+                loss.backward()
+                optimizer.step()
+                
+                total_loss += loss.item()
+                
+                # Progress
+                if batch_idx % 50 == 0:
+                    print(f"   Epoch {epoch+1}/{epochs} - Batch {batch_idx}/{len(dataloader)} - Loss: {loss.item():.4f}")
+            
+            avg_loss = total_loss / len(dataloader)
+            print(f"✅ Epoch {epoch+1}/{epochs} tamamlandı - Avg Loss: {avg_loss:.4f}")
+        
+        # Modeli kaydet
+        self.save_model(save_path)
+        print(f"✅ Model kaydedildi: {save_path}")
+    
+    def save_model(self, path):
+        """Modeli kaydet"""
+        torch.save({
+            'model_state': self.model.state_dict(),
+            'char_to_idx': self.char_to_idx,
+            'idx_to_char': self.idx_to_char,
+            'vocab_size': self.vocab_size,
+            'hidden_dim': self.model.hidden_dim,
+            'num_layers': self.model.num_layers,
+            'embedding_dim': self.model.embedding.embedding_dim
+        }, path)
+    
+    def load_model(self, path):
+        """Modeli yükle"""
+        print(f"📦 LSTM Model yükleniyor: {path}")
+        checkpoint = torch.load(path, map_location=self.device)
+        
+        self.char_to_idx = checkpoint['char_to_idx']
+        self.idx_to_char = checkpoint['idx_to_char']
+        self.vocab_size = checkpoint['vocab_size']
+        
+        # Model oluştur
+        self.model = LSTMLanguageModel(
+            self.vocab_size,
+            checkpoint['embedding_dim'],
+            checkpoint['hidden_dim'],
+            checkpoint['num_layers']
+        ).to(self.device)
+        
+        self.model.load_state_dict(checkpoint['model_state'])
+        self.model.eval()
+        
+        print(f"✅ LSTM Model yüklendi - Vocab: {self.vocab_size}")
+    
+    def generate(self, start_text, max_length=200, temperature=0.8):
+        """Metin üret"""
+        if self.model is None:
+            return ""
+        
+        self.model.eval()
+        
+        with torch.no_grad():
+            # Başlangıç metnini encode et
+            current_text = start_text
+            hidden = None
+            
+            for _ in range(max_length):
+                # Son karakteri al
+                if current_text:
+                    last_char = current_text[-1]
+                    if last_char not in self.char_to_idx:
+                        break
+                    
+                    char_idx = self.char_to_idx[last_char]
+                    input_tensor = torch.tensor([[char_idx]]).to(self.device)
+                    
+                    # Predict
+                    output, hidden = self.model(input_tensor, hidden)
+                    
+                    # Temperature sampling
+                    output = output[0, -1] / temperature
+                    probs = torch.softmax(output, dim=0)
+                    
+                    # Sample
+                    next_idx = torch.multinomial(probs, 1).item()
+                    next_char = self.idx_to_char[next_idx]
+                    
+                    current_text += next_char
+                    
+                    # Cümle bitirici token kontrolü
+                    if next_char in ['.', '!', '?'] or 'TR001' in current_text[-10:] or 'TR003' in current_text[-10:] or 'TR004' in current_text[-10:]:
+                        break
+                else:
+                    break
+            
+            # Sadece eklenen kısmı dön
+            generated = current_text[len(start_text):]
+            return generated
+    
+    def predict(self, text, use_tokens=True):
+        """Kelime/cümle tamamlama"""
+        if self.model is None:
+            return ""
+        
+        # Metni temizle
+        text_clean = full_clean(text, lowercase=True, use_tokens=use_tokens)
+        
+        # Metin üret
+        generated = self.generate(text_clean, max_length=100, temperature=0.7)
+        
+        # Tokenları restore et
+        if use_tokens:
+            generated = restore_punctuation_from_tokens(generated)
+        
+        return generated
 
 
 # Test
 if __name__ == "__main__":
-    print("🧠 Transformer Model Test\n")
+    import sys
     
-    config = TransformerConfig(
-        vocab_size=1000,
-        d_model=256,
-        n_heads=4,
-        n_layers=3,
-        d_ff=1024,
-        max_seq_length=128,
-        dropout=0.1,
-    )
-    
-    model = TurkishGPT(config)
-    print(f"✓ Model oluşturuldu")
-    print(f"  Parametreler: {sum(p.numel() for p in model.parameters()):,}")
-    
-    # Dummy input
-    batch_size = 2
-    seq_len = 10
-    input_ids = torch.randint(0, 1000, (batch_size, seq_len))
-    
-    # Forward pass
-    logits, loss = model(input_ids, targets=input_ids)
-    print(f"\n✓ Forward pass başarılı")
-    print(f"  Logits shape: {logits.shape}")
-    print(f"  Loss: {loss.item() if loss is not None else 'N/A'}")
-    
-    # Generation test
-    generated = model.generate(input_ids[:1], max_new_tokens=20, temperature=0.8, top_k=40)
-    print(f"\n✓ Generation başarılı")
-    print(f"  Generated shape: {generated.shape}")
+    if len(sys.argv) > 1 and sys.argv[1] == 'train':
+        # Eğitim modu
+        predictor = TransformerPredictor()
+        predictor.train(
+            text_file='story_tokenized_temp.txt',
+            seq_length=100,
+            embedding_dim=128,
+            hidden_dim=256,
+            num_layers=2,
+            epochs=5,
+            batch_size=64,
+            learning_rate=0.001,
+            save_path='lstm_model.pth'
+        )
+    else:
+        # Test modu
+        if os.path.exists('lstm_model.pth'):
+            predictor = TransformerPredictor('lstm_model.pth')
+            
+            test_texts = [
+                "bugün hava",
+                "türkiye",
+                "futbol maçı"
+            ]
+            
+            print("\n🧪 Test Sonuçları:\n")
+            for text in test_texts:
+                result = predictor.predict(text)
+                print(f"Input: {text}")
+                print(f"Output: {result}\n")
+        else:
+            print("❌ lstm_model.pth bulunamadı!")
+            print("Önce modeli eğitin: python transformer_model.py train")
