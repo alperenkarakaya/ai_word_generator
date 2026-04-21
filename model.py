@@ -80,19 +80,29 @@ class NgramPredictor:
         print(f"📦 Model yükleniyor: {filepath}")
         with open(filepath, 'rb') as f:
             loaded = pickle.load(f)
-            
+
         # Dictionary formatındaysa
         if isinstance(loaded, dict):
-            self.word_counts = loaded.get('word_counts', Counter())
-            self.unigram_counts = loaded.get('unigram_counts', Counter())
-            self.bigram_counts = defaultdict(Counter, loaded.get('bigram_counts', {}))
-            self.trigram_counts = defaultdict(Counter, loaded.get('trigram_counts', {}))
+            self.word_counts = Counter(loaded.get('word_counts', {}))
+            self.unigram_counts = Counter(loaded.get('unigram_counts', {}))
+            # defaultdict tipini koru
+            bigram_raw = loaded.get('bigram_counts', {})
+            self.bigram_counts = defaultdict(Counter)
+            for k, v in bigram_raw.items():
+                self.bigram_counts[k] = Counter(v)
+            trigram_raw = loaded.get('trigram_counts', {})
+            self.trigram_counts = defaultdict(Counter)
+            for k, v in trigram_raw.items():
+                self.trigram_counts[k] = Counter(v)
             self.total_words = loaded.get('total_words', 0)
+            print(f"unigram_counts örnek: {list(self.unigram_counts.items())[:5]}")
         # Sınıf örneği ise (__dict__ transferi)
         elif hasattr(loaded, '__dict__'):
             self.__dict__.update(loaded.__dict__)
-            
+
         print(f"✅ Model yüklendi. Kelime haznesi: {len(self.word_counts):,}")
+        if not self.unigram_counts:
+            print("⚠️ Uyarı: unigram_counts boş veya yüklenemedi!")
 
     def predict(self, text, use_tokens=True):
         """Kelime tamamlama."""
@@ -118,15 +128,17 @@ class NgramPredictor:
         
         # Bir sonraki kelimeyi tahmin et (Bigram)
         next_word_pred = ""
-        if best in self.bigram_counts:
-            candidates = self.bigram_counts[best]
+        # Bigram anahtarı olarak tamamlanmış kelimeyi kullan
+        bigram_key = best
+        if bigram_key in self.bigram_counts:
+            candidates = self.bigram_counts[bigram_key]
             if candidates:
                 # Ağırlıklı rastgele seçim
                 next_word = random.choices(list(candidates.keys()), weights=list(candidates.values()), k=1)[0]
                 next_word_pred = " " + next_word
-        
+
         result = suffix + next_word_pred
-        
+
         if use_tokens:
             result = restore_punctuation_from_tokens(result)
             
@@ -138,10 +150,25 @@ class NgramPredictor:
         text_clean = full_clean(text, lowercase=True, use_tokens=use_tokens)
         words = text_clean.split()
         
-        if not words: return {"unigram": [], "bigram": [], "trigram": []}
-        
+        # Eğer input boşsa: sadece unigram döndür
+        if not words:
+            total_unigram = sum(self.unigram_counts.values())
+            unigram_probs = []
+            for word, count in self.unigram_counts.most_common(10):
+                display_word = restore_punctuation_from_tokens(word) if is_punctuation_token(word) else word
+                unigram_probs.append({
+                    "word": display_word,
+                    "probability": round((count/total_unigram)*100, 1)
+                })
+            return {
+                "unigram": unigram_probs,
+                "bigram": [],
+                "trigram": [],
+                "current_word": ""
+            }
+
         last_word = words[-1]
-        
+
         # Bigram Olasılıkları
         bigram_probs = []
         if last_word in self.bigram_counts:
@@ -168,12 +195,21 @@ class NgramPredictor:
                         "word": display_word, 
                         "probability": round((count/total)*100, 1)
                     })
-        
+
         # Current word'u de restore et
         display_current = restore_punctuation_from_tokens(last_word) if is_punctuation_token(last_word) else last_word
-                    
+
+        # Unigram Olasılıkları (en sık 10 kelime)
+        total_unigram = sum(self.unigram_counts.values())
+        unigram_probs = []
+        for word, count in self.unigram_counts.most_common(10):
+            display_word = restore_punctuation_from_tokens(word) if is_punctuation_token(word) else word
+            unigram_probs.append({
+                "word": display_word,
+                "probability": round((count/total_unigram)*100, 1)
+            })
         return {
-            "unigram": [], # Şimdilik boş geçiyoruz
+            "unigram": unigram_probs,
             "bigram": bigram_probs,
             "trigram": trigram_probs,
             "current_word": display_current
@@ -259,13 +295,13 @@ class NgramPredictor:
                             break
                         continue
             
-            # Hiçbir kandidat yoksa dur
+            # Hiçbir aday yoksa dur
             break
         
-        # Sonucu oluştur
+        # sonucun oluşturulması
         result = " ".join(generated_words)
         
-        # Tokenları restore et
+        # tokenların restore edilmesi
         if use_tokens:
             result = restore_punctuation_from_tokens(result)
         

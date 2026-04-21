@@ -446,3 +446,31 @@ kbd {
         grid-template-columns: 1fr;
     }
 }
+
+/* ===== Engine status badge (header) ===== */
+.engine-badge {
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 20px;
+    letter-spacing: 0.02em;
+}
+.engine-badge.ready {
+    background: #d4f5e2;
+    color: #1a7a47;
+}
+.engine-badge.not-ready {
+    background: #fde8e8;
+    color: #c0392b;
+}
+
+/* ===== Warning banner ===== */
+.warning-banner {
+    margin-top: var(--spacing-sm);
+    padding: 10px 14px;
+    background: #fff8e1;
+    border-left: 4px solid #f59e0b;
+    border-radius: var(--radius-sm);
+    font-size: 0.88rem;
+    color: #7c5e0a;
+}

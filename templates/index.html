@@ -1,115 +1,129 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Word Generator - N-gram Predictor</title>
+    <title>AI Text Generator — Transformer</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <div class="app-container">
+
         <!-- Header -->
         <header class="app-header">
             <div class="header-content">
-                <h1 class="app-title">
-                    <span>AI Word Generator</span>
-                </h1>
+                <h1 class="app-title">AI Text Generator</h1>
+                <span class="engine-badge {% if transformer_ready %}ready{% else %}not-ready{% endif %}">
+                    {% if transformer_ready %}
+                        Transformer ✓
+                    {% else %}
+                        Transformer not loaded — train first
+                    {% endif %}
+                </span>
             </div>
         </header>
 
-        <!-- Main Content -->
+        <!-- Editor -->
         <main class="main-content">
-            <!-- Editor Section -->
             <section class="editor-section">
                 <div class="editor-container">
                     <div class="editor-wrapper">
                         <div id="ghost-input" class="editor-layer ghost-layer"></div>
-                        <textarea 
-                            id="user-input" 
-                            class="editor-layer user-layer" 
-                            placeholder="Yazmaya başla..."
+                        <textarea
+                            id="user-input"
+                            class="editor-layer user-layer"
+                            placeholder="Start typing…"
                             spellcheck="false"
                             autofocus
                         ></textarea>
                     </div>
                     <div class="editor-hint">
-                        <span>Tamamlama için <kbd>TAB</kbd> tuşuna basın</span>
+                        <kbd>Shift</kbd>+<kbd>Tab</kbd> — complete sentence
+                        &nbsp;·&nbsp;
+                        <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> — generate paragraph
                     </div>
+
+                    {% if not transformer_ready %}
+                    <div class="warning-banner">
+                        ⚠ {{ transformer_error }}
+                    </div>
+                    {% endif %}
                 </div>
             </section>
 
-            <!-- Probabilities Section -->
+            <!-- N-gram probability panels (educational / visualisation) -->
             <section class="probabilities-section" id="probabilities-section">
                 <div class="section-header">
-                    <h2 class="section-title">Kelime Tahmin Olasılıkları</h2>
-                    <p class="section-description">3 farklı model ile gerçek zamanlı analiz</p>
+                    <h2 class="section-title">N-gram Probability View</h2>
+                    <p class="section-description">
+                        Statistical next-word probabilities — illustrates how the
+                        <em>old</em> approach worked vs. the Transformer.
+                    </p>
                 </div>
 
                 <div id="probabilities-container" class="probabilities-grid">
-                    <!-- 1-GRAM Box -->
+                    <!-- 1-GRAM -->
                     <div class="probability-card unigram-card">
                         <div class="card-header">
                             <div class="header-left">
                                 <span class="gram-badge unigram-badge">1-GRAM</span>
-                                <span class="card-title">Unigram Model</span>
+                                <span class="card-title">Unigram</span>
                             </div>
-                            <span class="context-label">Genel frekans</span>
+                            <span class="context-label">Overall frequency</span>
                         </div>
                         <div class="card-body">
                             <div id="unigram-list" class="predictions-list">
-                                <div class="no-data">Yazmaya başlayın...</div>
+                                <div class="no-data">Start typing…</div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- 2-GRAM Box -->
+                    <!-- 2-GRAM -->
                     <div class="probability-card bigram-card">
                         <div class="card-header">
                             <div class="header-left">
                                 <span class="gram-badge bigram-badge">2-GRAM</span>
-                                <span class="card-title">Bigram Model</span>
+                                <span class="card-title">Bigram</span>
                             </div>
-                            <span class="context-label">Bağlam:  "<span id="bigram-word" class="context-word">-</span>"</span>
+                            <span class="context-label">After: "<span id="bigram-word" class="context-word">—</span>"</span>
                         </div>
                         <div class="card-body">
                             <div id="bigram-list" class="predictions-list">
-                                <div class="no-data">En az 1 kelime gerekli</div>
+                                <div class="no-data">Need ≥ 1 word</div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- 3-GRAM Box -->
+                    <!-- 3-GRAM -->
                     <div class="probability-card trigram-card">
                         <div class="card-header">
                             <div class="header-left">
                                 <span class="gram-badge trigram-badge">3-GRAM</span>
-                                <span class="card-title">Trigram Model</span>
+                                <span class="card-title">Trigram</span>
                             </div>
-                            <span class="context-label">Bağlam: "<span id="trigram-context" class="context-word">-</span>"</span>
+                            <span class="context-label">After: "<span id="trigram-context" class="context-word">—</span>"</span>
                         </div>
                         <div class="card-body">
                             <div id="trigram-list" class="predictions-list">
-                                <div class="no-data">En az 2 kelime gerekli</div>
+                                <div class="no-data">Need ≥ 2 words</div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Info Banner -->
                 <div class="info-banner">
-                    <span class="info-icon">💡</span>
+                    <span class="info-icon">ℹ</span>
                     <span class="info-text">
-                        <strong>1gram: </strong> Genel kelime sıklığı | 
-                        <strong>2gram:</strong> Son 1 kelimeye bakar | 
-                        <strong>3gram:</strong> Son 2 kelimeye bakar
+                        <strong>1-gram</strong>: ignores context — pure word frequency |
+                        <strong>2-gram</strong>: looks at the last 1 word |
+                        <strong>3-gram</strong>: looks at the last 2 words.
+                        The Transformer looks at all 256 tokens at once.
                     </span>
                 </div>
             </section>
         </main>
 
-        <!-- Footer -->
-        <footer class="app-footer">
-        </footer>
+        <footer class="app-footer"></footer>
     </div>
 
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
