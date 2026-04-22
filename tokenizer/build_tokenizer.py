@@ -3,10 +3,18 @@ SentencePiece BPE tokenizer'ını eğitir.
 
 Pipeline:
   1. story.txt'i akışla oku, Wikipedia @-@ artıklarını temizle.
-  2. Noktalamaları TR001..TR017 tokenlerine çevir.
-  3. Geçici düz-metin dosyasını SentencePiece girişi olarak yaz.
-  4. SentencePiece BPE eğit (vocab_size=16000, TR* tokenlar user_defined_symbols).
-  5. Tüm TR* tokenlerin tek id'ye düştüğünü doğrula.
+  2. Ham metni (TR token değil, gerçek noktalama ile) SentencePiece'e ver.
+     TR* tokenlar user_defined_symbols olarak eklenir ama eğitim korpusunda
+     geçmezler — böylece BPE hiç "TR0…" birleşimi öğrenmez.
+  3. SentencePiece BPE eğit (vocab_size=16000).
+  4. Tüm TR* tokenlerin tek id'ye düştüğünü doğrula.
+
+Neden TR token'ları eğitim verisinden çıkardık?
+  user_defined_symbols vocab'a token ekler ama BPE'nin onları kısmen
+  birleştirmesini engellemez. Eğer "TR001" eğitim verisinde geçerse BPE
+  "TR0" gibi bir alt-kelime öğrenebilir ve encode("TR001") → [TR0_id, 01_id]
+  döndürür. Çözüm: SPM'i ham noktalama üzerinde eğit; TR tokenlar SPM için
+  tamamen yeni diziler olur ve user_defined_symbols garantisi çalışır.
 
 Çıktılar:
   tokenizer/spm.model
@@ -21,13 +29,11 @@ import os
 import sys
 import tempfile
 
-# Bu modül komut satırından çağrıldığında repo kökünü import yoluna ekle
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from text_utils import (
     ALL_TR_TOKENS,
     clean_wikipedia_artifacts,
-    replace_punctuation_with_tokens,
 )
 
 DEFAULT_INPUT = "story.txt"
@@ -37,7 +43,10 @@ CHUNK_BYTES = 4 * 1024 * 1024  # 4 MB
 
 
 def stream_preprocess(input_path: str, output_path: str) -> int:
-    """story.txt'i akışla okuyup ön-işlenmiş halini output_path'e yaz."""
+    """story.txt'i akışla okuyup Wikipedia artıklarını temizleyerek yaz.
+
+    TR token değişimi yapılmaz — SPM ham noktalama üzerinde eğitilir.
+    """
     total_chars = 0
     with open(input_path, "r", encoding="utf-8", errors="replace") as fin, \
          open(output_path, "w", encoding="utf-8") as fout:
@@ -47,24 +56,18 @@ def stream_preprocess(input_path: str, output_path: str) -> int:
             if not chunk:
                 break
             text = leftover + chunk
-            # Satır sınırında kes ki TR017 (satır sonu) doğru yerleşsin.
             cut = text.rfind("\n")
             if cut == -1:
                 leftover = text
                 continue
             head, leftover = text[:cut + 1], text[cut + 1:]
             cleaned = clean_wikipedia_artifacts(head)
-            tokenized = replace_punctuation_with_tokens(cleaned)
-            # TR017 replaced \n, so put real newlines back so SPM reads line-by-line
-            tokenized = tokenized.replace('TR017 ', 'TR017\n')
-            fout.write(tokenized)
-            total_chars += len(tokenized)
+            fout.write(cleaned)
+            total_chars += len(cleaned)
         if leftover:
             cleaned = clean_wikipedia_artifacts(leftover)
-            tokenized = replace_punctuation_with_tokens(cleaned)
-            tokenized = tokenized.replace('TR017 ', 'TR017\n')
-            fout.write(tokenized)
-            total_chars += len(tokenized)
+            fout.write(cleaned)
+            total_chars += len(cleaned)
     return total_chars
 
 
