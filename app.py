@@ -154,10 +154,10 @@ if __name__ == "__main__":
     print("  AI Text Generator — Transformer Edition")
     print("=" * 60)
     if transformer:
-        print("  Generation : Transformer  ✓")
+        print("  Generation : Transformer  OK")
     else:
         print(f"  Generation : NOT READY  ({transformer_error})")
-    print(f"  Prob panels: {'N-gram  ✓' if ngram else 'N-gram  ✗ (run create_pickle.py)'}")
+    print(f"  Prob panels: {'N-gram  OK' if ngram else 'N-gram  -- (run create_pickle.py)'}")
     print()
     print("  http://localhost:5000")
     print("=" * 60)
