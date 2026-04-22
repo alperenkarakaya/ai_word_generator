@@ -1,26 +1,17 @@
 """
-SentencePiece BPE tokenizer'ını eğitir.
+Train a SentencePiece BPE tokenizer on story.txt.
 
-Pipeline:
-  1. story.txt'i akışla oku, Wikipedia @-@ artıklarını temizle.
-  2. Ham metni (TR token değil, gerçek noktalama ile) SentencePiece'e ver.
-     TR* tokenlar user_defined_symbols olarak eklenir ama eğitim korpusunda
-     geçmezler — böylece BPE hiç "TR0…" birleşimi öğrenmez.
-  3. SentencePiece BPE eğit (vocab_size=16000).
-  4. Tüm TR* tokenlerin tek id'ye düştüğünü doğrula.
+Pure BPE mode (no TR token placeholders):
+  1. Stream story.txt, strip Wikipedia @-@ / @.@ / @,@ artefacts, lowercase.
+  2. Write to a temp file (one line per original line).
+  3. Train SentencePiece BPE with vocab_size=16000.
+     Special ids: pad=0, unk=1, bos=2, eos=3.
 
-Neden TR token'ları eğitim verisinden çıkardık?
-  user_defined_symbols vocab'a token ekler ama BPE'nin onları kısmen
-  birleştirmesini engellemez. Eğer "TR001" eğitim verisinde geçerse BPE
-  "TR0" gibi bir alt-kelime öğrenebilir ve encode("TR001") → [TR0_id, 01_id]
-  döndürür. Çözüm: SPM'i ham noktalama üzerinde eğit; TR tokenlar SPM için
-  tamamen yeni diziler olur ve user_defined_symbols garantisi çalışır.
-
-Çıktılar:
+Outputs:
   tokenizer/spm.model
   tokenizer/spm.vocab
 
-Kullanım:
+Usage:
   python tokenizer/build_tokenizer.py
   python tokenizer/build_tokenizer.py --vocab_size 16000 --input story.txt
 """
@@ -31,10 +22,7 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from text_utils import (
-    ALL_TR_TOKENS,
-    clean_wikipedia_artifacts,
-)
+from text_utils import clean_wikipedia_artifacts
 
 DEFAULT_INPUT = "story.txt"
 DEFAULT_MODEL_PREFIX = "tokenizer/spm"
@@ -43,10 +31,7 @@ CHUNK_BYTES = 4 * 1024 * 1024  # 4 MB
 
 
 def stream_preprocess(input_path: str, output_path: str) -> int:
-    """story.txt'i akışla okuyup Wikipedia artıklarını temizleyerek yaz.
-
-    TR token değişimi yapılmaz — SPM ham noktalama üzerinde eğitilir.
-    """
+    """Stream story.txt → cleaned text, preserving newlines for SPM's line-per-sentence input."""
     total_chars = 0
     with open(input_path, "r", encoding="utf-8", errors="replace") as fin, \
          open(output_path, "w", encoding="utf-8") as fout:
@@ -61,11 +46,11 @@ def stream_preprocess(input_path: str, output_path: str) -> int:
                 leftover = text
                 continue
             head, leftover = text[:cut + 1], text[cut + 1:]
-            cleaned = clean_wikipedia_artifacts(head)
+            cleaned = clean_wikipedia_artifacts(head).lower()
             fout.write(cleaned)
             total_chars += len(cleaned)
         if leftover:
-            cleaned = clean_wikipedia_artifacts(leftover)
+            cleaned = clean_wikipedia_artifacts(leftover).lower()
             fout.write(cleaned)
             total_chars += len(cleaned)
     return total_chars
@@ -76,23 +61,22 @@ def train(input_path: str, model_prefix: str, vocab_size: int):
 
     os.makedirs(os.path.dirname(model_prefix) or ".", exist_ok=True)
 
-    print(f"[1/4] Ön-işleme: {input_path}")
+    print(f"[1/3] Preprocessing: {input_path}")
     with tempfile.NamedTemporaryFile(
         prefix="spm_input_", suffix=".txt", delete=False, mode="w", encoding="utf-8"
     ) as tmp:
         tmp_path = tmp.name
     try:
         n_chars = stream_preprocess(input_path, tmp_path)
-        print(f"      Yazılan karakter: {n_chars:,}")
+        print(f"      Chars written: {n_chars:,}")
 
-        print(f"[2/4] SentencePiece BPE eğitimi (vocab_size={vocab_size})")
+        print(f"[2/3] Training SentencePiece BPE (vocab_size={vocab_size})")
         spm.SentencePieceTrainer.train(
             input=tmp_path,
             model_prefix=model_prefix,
             vocab_size=vocab_size,
             model_type="bpe",
             character_coverage=1.0,
-            user_defined_symbols=ALL_TR_TOKENS,
             pad_id=0,
             unk_id=1,
             bos_id=2,
@@ -108,29 +92,17 @@ def train(input_path: str, model_prefix: str, vocab_size: int):
         except OSError:
             pass
 
-    print(f"[3/4] Doğrulama: {model_prefix}.model")
+    print(f"[3/3] Loading and verifying: {model_prefix}.model")
     sp = spm.SentencePieceProcessor()
     sp.load(f"{model_prefix}.model")
-
-    print(f"[4/4] TR tokenlerin tek id olduğunu doğrula")
-    bad = []
-    for tok in ALL_TR_TOKENS:
-        ids = sp.encode(tok, out_type=int)
-        if len(ids) != 1:
-            bad.append((tok, ids))
-    if bad:
-        for tok, ids in bad:
-            print(f"  HATA: {tok} -> {ids}")
-        raise SystemExit("TR tokenleri tek id'ye düşmedi. user_defined_symbols ayarını kontrol edin.")
-    print(f"  OK — {len(ALL_TR_TOKENS)} TR tokenin tamamı tek id.")
-    print(f"\nVocab boyutu: {sp.get_piece_size()}")
-    print(f"Model dosyaları: {model_prefix}.model, {model_prefix}.vocab")
+    print(f"  OK — vocab size: {sp.get_piece_size()}")
+    print(f"Model files: {model_prefix}.model, {model_prefix}.vocab")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", default=DEFAULT_INPUT, help="Ham metin dosyası (story.txt)")
-    parser.add_argument("--model_prefix", default=DEFAULT_MODEL_PREFIX, help="Çıktı dosya öneki")
+    parser.add_argument("--input", default=DEFAULT_INPUT)
+    parser.add_argument("--model_prefix", default=DEFAULT_MODEL_PREFIX)
     parser.add_argument("--vocab_size", type=int, default=DEFAULT_VOCAB_SIZE)
     args = parser.parse_args()
     train(args.input, args.model_prefix, args.vocab_size)
