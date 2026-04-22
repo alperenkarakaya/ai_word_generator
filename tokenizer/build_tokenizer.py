@@ -55,11 +55,14 @@ def stream_preprocess(input_path: str, output_path: str) -> int:
             head, leftover = text[:cut + 1], text[cut + 1:]
             cleaned = clean_wikipedia_artifacts(head)
             tokenized = replace_punctuation_with_tokens(cleaned)
+            # TR017 replaced \n, so put real newlines back so SPM reads line-by-line
+            tokenized = tokenized.replace('TR017 ', 'TR017\n')
             fout.write(tokenized)
             total_chars += len(tokenized)
         if leftover:
             cleaned = clean_wikipedia_artifacts(leftover)
             tokenized = replace_punctuation_with_tokens(cleaned)
+            tokenized = tokenized.replace('TR017 ', 'TR017\n')
             fout.write(tokenized)
             total_chars += len(tokenized)
     return total_chars
