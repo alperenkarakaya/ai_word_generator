@@ -8,13 +8,43 @@ const bigramWordSpan = document.getElementById('bigram-word');
 const trigramCtxSpan = document.getElementById('trigram-context');
 const engineSelect   = document.getElementById('engine-select');
 
+// ── State ────────────────────────────────────────────────────────────────────
+let debounceTimer  = null;
+let currentGhost   = '';   // full ghost-layer text (user text + gray suggestion)
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getEngine() {
     return engineSelect ? engineSelect.value : 'ngram';
 }
 
-// ── State ────────────────────────────────────────────────────────────────────
-let debounceTimer = null;
+function escapeHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+/**
+ * Renders the ghost overlay.
+ * userText  — what the user actually typed
+ * ghostFull — userText + gray suggestion (returned by /predict_next)
+ *
+ * The ghost div sits behind the textarea.  We make the "typed" portion
+ * transparent and only the suggestion portion gray — so the user sees their
+ * own black text cleanly, with the gray suggestion appearing after it.
+ */
+function renderGhost(userText, ghostFull) {
+    if (!ghostFull || ghostFull.length <= userText.length) {
+        ghostField.innerHTML = '';
+        currentGhost = '';
+        return;
+    }
+    currentGhost = ghostFull;
+    const typed      = ghostFull.slice(0, userText.length);
+    const suggestion = ghostFull.slice(userText.length);
+    ghostField.innerHTML =
+        `<span style="color:transparent">${escapeHtml(typed)}</span>` +
+        `<span class="ghost-suggestion">${escapeHtml(suggestion)}</span>`;
+}
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
@@ -27,30 +57,49 @@ window.addEventListener('DOMContentLoaded', () => {
 // ── Listeners ────────────────────────────────────────────────────────────────
 inputField.addEventListener('input',   handleInput);
 inputField.addEventListener('keydown', handleKeydown);
-inputField.addEventListener('scroll',  () => { ghostField.scrollTop = inputField.scrollTop; });
+inputField.addEventListener('scroll',  syncScroll);
 
-// ── Input handler (debounced) ────────────────────────────────────────────────
+function syncScroll() {
+    ghostField.scrollTop  = inputField.scrollTop;
+    ghostField.scrollLeft = inputField.scrollLeft;
+}
+
+// ── Input handler (debounced) ─────────────────────────────────────────────────
 function handleInput() {
     const text = this.value;
+
+    // Clear ghost immediately when user types so stale suggestion disappears
+    ghostField.innerHTML = '';
+    currentGhost = '';
+
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
+        // Ghost text — only for N-gram engine
+        if (getEngine() === 'ngram') {
+            try {
+                const r = await fetch('/predict_next?text=' + encodeURIComponent(text));
+                const d = await r.json();
+                renderGhost(text, d.ghost || '');
+            } catch (_) {}
+        }
+
+        // Probability panels
         try {
             const r = await fetch('/probabilities?text=' + encodeURIComponent(text));
             renderProbabilities(await r.json());
         } catch (_) {}
-    }, 150);
+    }, 100);
 }
 
 // ── Keydown handler ──────────────────────────────────────────────────────────
 function handleKeydown(e) {
-    const text   = this.value;
+    const text   = inputField.value;
     const engine = getEngine();
 
-    // Ctrl + Shift + Tab → paragraph generation (must be checked before Shift+Tab)
+    // ── Ctrl + Shift + Tab → paragraph (must be checked before Shift+Tab) ──
     if (e.key === 'Tab' && e.shiftKey && e.ctrlKey) {
         e.preventDefault();
         if (!text.length) return;
-
         fetch(`/predict_paragraph?engine=${engine}&text=` + encodeURIComponent(text))
             .then(r => r.json())
             .then(data => {
@@ -64,28 +113,45 @@ function handleKeydown(e) {
         return;
     }
 
-    // Shift + Tab → sentence completion
-    if (e.key === 'Tab' && e.shiftKey) {
+    // ── Shift + Tab → full sentence completion ──────────────────────────────
+    if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey) {
         e.preventDefault();
         if (!text.length) return;
-
         fetch(`/predict_sentence?engine=${engine}&text=` + encodeURIComponent(text))
             .then(r => r.json())
             .then(data => {
-                if (data.error) {
-                    console.warn('Sentence error:', data.error);
-                    return;
-                }
+                if (data.error) { console.warn('Sentence error:', data.error); return; }
                 if (data.completion) {
                     inputField.value += data.completion;
                     inputField.dispatchEvent(new Event('input'));
                 }
             })
             .catch(err => console.error('predict_sentence failed:', err));
+        return;
+    }
+
+    // ── Tab alone → accept ghost word (one word at a time) ─────────────────
+    if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey) {
+        e.preventDefault();
+        if (!currentGhost || currentGhost === text) return;
+        // Set the textarea to the full ghost content (user text + accepted word)
+        inputField.value = currentGhost;
+        inputField.setSelectionRange(currentGhost.length, currentGhost.length);
+        // Clear ghost immediately then trigger re-fetch for the next word
+        ghostField.innerHTML = '';
+        currentGhost = '';
+        inputField.dispatchEvent(new Event('input'));
+        return;
+    }
+
+    // ── Escape → clear ghost ────────────────────────────────────────────────
+    if (e.key === 'Escape') {
+        ghostField.innerHTML = '';
+        currentGhost = '';
     }
 }
 
-// ── Render probability panels ────────────────────────────────────────────────
+// ── Render probability panels ─────────────────────────────────────────────────
 function renderProbabilities(data) {
     renderList(unigramList, data.unigram || [], 'Start typing…');
 
@@ -115,10 +181,4 @@ function renderList(container, items, emptyMsg) {
             </div>
         </div>`
     ).join('');
-}
-
-function escapeHtml(text) {
-    const d = document.createElement('div');
-    d.textContent = text;
-    return d.innerHTML;
 }

@@ -146,6 +146,23 @@ def predict_paragraph():
     return jsonify({"completion": paragraph})
 
 
+@app.route("/predict_next")
+def predict_next():
+    """
+    Returns the full ghost-layer text for the inline word suggestion.
+    Called on every keystroke; always uses the N-gram engine.
+
+    Query params
+    ------------
+    text : str — current editor content
+    """
+    if ngram is None:
+        return jsonify({"ghost": ""})
+    text  = request.args.get("text", "")
+    ghost = ngram.get_ghost_text(text)
+    return jsonify({"ghost": ghost})
+
+
 @app.route("/probabilities")
 def get_probabilities():
     """Unigram / bigram / trigram probability tables for the UI panels."""

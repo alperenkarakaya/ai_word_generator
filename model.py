@@ -49,9 +49,9 @@ class NgramPredictor:
 
     def _predict_next_with_backoff(self, context: list):
         """
-        Stupid Backoff: try max_n-gram first, fall back to (n-1)-gram,
-        down to bigram, then unigram.
-        Returns the sampled next token or None.
+        Stupid Backoff (stochastic): try max_n-gram first, fall back to (n-1)-gram,
+        down to bigram, then unigram.  Uses weighted random sampling for variety.
+        Used by generate/sentence-complete flows.
         """
         for n in range(self.max_n, 3, -1):
             if n not in self.ngram_counts:
@@ -78,6 +78,38 @@ class NgramPredictor:
             top = self.unigram_counts.most_common(200)
             words, weights = zip(*top)
             return random.choices(words, weights=weights, k=1)[0]
+
+        return None
+
+    def _predict_most_likely_next(self, context: list):
+        """
+        Stupid Backoff (deterministic): same order of fallback but always picks
+        the single most-frequent candidate.  Used for ghost text so the suggestion
+        is stable while the user types.
+        """
+        for n in range(self.max_n, 3, -1):
+            if n not in self.ngram_counts:
+                continue
+            if len(context) < n - 1:
+                continue
+            key   = tuple(context[-(n - 1):])
+            cands = self.ngram_counts[n].get(key)
+            if cands:
+                return max(cands, key=cands.get)
+
+        if len(context) >= 2:
+            key   = (context[-2], context[-1])
+            cands = self.trigram_counts.get(key)
+            if cands:
+                return max(cands, key=cands.get)
+
+        if context:
+            cands = self.bigram_counts.get(context[-1])
+            if cands:
+                return max(cands, key=cands.get)
+
+        if self.unigram_counts:
+            return self.unigram_counts.most_common(1)[0][0]
 
         return None
 
@@ -232,6 +264,54 @@ class NgramPredictor:
             completions.append(comp)
             accumulated = accumulated + comp
         return "".join(completions)
+
+    # ── ghost text (inline word suggestion) ───────────────────────────────────
+
+    def get_ghost_text(self, text: str) -> str:
+        """
+        Returns the full string for the ghost overlay layer.
+        The ghost layer is positioned exactly over the textarea; the user sees:
+          - their own typed text (covered by the opaque textarea characters)
+          - the suggestion in gray beyond the cursor
+
+        Rules:
+          - text ends with space  → predict next word, return text + word
+          - text ends with a partial word (not in vocab) → return prefix + best_completion
+          - text ends with a complete word (in vocab)    → predict next word, return text + ' ' + word
+        """
+        tokens = self._prepare_for_lookup(text)
+        if not text.strip() or not tokens:
+            return ""
+
+        trailing_space = text.endswith(" ")
+        last = tokens[-1]
+
+        if trailing_space:
+            tok = self._predict_most_likely_next(tokens)
+            if tok is None:
+                return ""
+            word = restore_punctuation_from_tokens(tok) if is_punctuation_token(tok) else tok
+            return text + word
+
+        if is_punctuation_token(last):
+            return ""
+
+        if last in self.word_counts:
+            # Cursor is right after a complete word — show the predicted next word
+            tok = self._predict_most_likely_next(tokens)
+            if tok is None:
+                return ""
+            word = restore_punctuation_from_tokens(tok) if is_punctuation_token(tok) else tok
+            return text + " " + word
+        else:
+            # Cursor is inside a partial word — show the best completion
+            matches = [w for w in self.word_counts if w.startswith(last)]
+            if not matches:
+                return ""
+            best = max(matches, key=lambda w: self.word_counts[w])
+            last_space = text.rfind(" ")
+            prefix = text[: last_space + 1] if last_space >= 0 else ""
+            return prefix + best
 
     # ── probability panel (UI) ─────────────────────────────────────────────────
 

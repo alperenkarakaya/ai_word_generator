@@ -131,7 +131,7 @@ body {
     overflow-wrap: break-word;
 }
 
-/* Ghost Layer (Suggestion) */
+/* Ghost Layer (inline word suggestion) */
 .ghost-layer {
     position: absolute;
     top: 0;
@@ -141,6 +141,12 @@ body {
     pointer-events: none;
     border-color: transparent;
     overflow: hidden;
+    /* Ensure ghost spans don't inherit any colour */
+    background: transparent;
+}
+
+.ghost-suggestion {
+    color: var(--text-ghost);   /* #999999 — the gray suggestion text */
 }
 
 /* User Layer (Input) */
