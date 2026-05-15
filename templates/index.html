@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Text Generator — Transformer</title>
+    <title>AI Text Generator</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
@@ -13,13 +13,23 @@
         <header class="app-header">
             <div class="header-content">
                 <h1 class="app-title">AI Text Generator</h1>
-                <span class="engine-badge {% if transformer_ready %}ready{% else %}not-ready{% endif %}">
-                    {% if transformer_ready %}
-                        Transformer ✓
-                    {% else %}
-                        Transformer not loaded — train first
+
+                <div class="header-controls">
+                    <label class="engine-label" for="engine-select">Engine</label>
+                    <select id="engine-select" class="engine-select">
+                        <option value="ngram" selected>
+                            N-gram
+                            {% if ngram_ready %}({{ ngram_max_n }}-gram backoff) ✓{% else %}— not loaded{% endif %}
+                        </option>
+                        <option value="transformer" {% if not transformer_ready %}disabled{% endif %}>
+                            Transformer {% if transformer_ready %}✓{% else %}— not loaded{% endif %}
+                        </option>
+                    </select>
+
+                    {% if not ngram_ready %}
+                    <span class="engine-status error">N-gram: {{ ngram_error }}</span>
                     {% endif %}
-                </span>
+                </div>
             </div>
         </header>
 
@@ -42,22 +52,17 @@
                         &nbsp;·&nbsp;
                         <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> — generate paragraph
                     </div>
-
-                    {% if not transformer_ready %}
-                    <div class="warning-banner">
-                        ⚠ {{ transformer_error }}
-                    </div>
-                    {% endif %}
                 </div>
             </section>
 
-            <!-- N-gram probability panels (educational / visualisation) -->
+            <!-- N-gram probability panels -->
             <section class="probabilities-section" id="probabilities-section">
                 <div class="section-header">
                     <h2 class="section-title">N-gram Probability View</h2>
                     <p class="section-description">
-                        Statistical next-word probabilities — illustrates how the
-                        <em>old</em> approach worked vs. the Transformer.
+                        Statistical next-word probabilities from the N-gram model.
+                        Generation uses <strong>Stupid Backoff</strong> — tries the
+                        highest order first and falls back when no match is found.
                     </p>
                 </div>
 
@@ -114,10 +119,12 @@
                 <div class="info-banner">
                     <span class="info-icon">ℹ</span>
                     <span class="info-text">
-                        <strong>1-gram</strong>: ignores context — pure word frequency |
-                        <strong>2-gram</strong>: looks at the last 1 word |
-                        <strong>3-gram</strong>: looks at the last 2 words.
-                        The Transformer looks at all 256 tokens at once.
+                        <strong>1-gram</strong>: pure word frequency |
+                        <strong>2-gram</strong>: conditions on last 1 word |
+                        <strong>3-gram</strong>: conditions on last 2 words.
+                        During generation the model uses up to
+                        <strong>{{ ngram_max_n }}-gram</strong> context
+                        with Stupid Backoff.
                     </span>
                 </div>
             </section>

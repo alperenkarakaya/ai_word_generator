@@ -1,93 +1,98 @@
+"""
+Build the N-gram model pickle from story.txt.
+Run this once (or whenever you want to rebuild):  python create_pickle.py
+"""
 import pickle
 import re
 import os
 import text_utils
-from model import NgramPredictor  # DÜZELTİLDİ: model_new yerine model
+from model import NgramPredictor
 
-# --- AYARLAR ---
-INPUT_FILE = "story.txt"
-TEMP_TOKENIZED_FILE = "story_tokenized_temp.txt"
-MODEL_OUTPUT_FILE = "saved_model.pkl"
+# ── settings ──────────────────────────────────────────────────────────────────
+MAX_N      = 7           # highest n-gram order (Stupid Backoff goes from 7 down to 1)
+READ_LIMIT = 10_000_000  # characters to read (~1.5M words); 0 = full file
 
-# Performans ayarı: 1 Milyon karakter
-READ_LIMIT = 1000000 
+INPUT_FILE   = "story.txt"
+TEMP_FILE    = "story_tokenized_temp.txt"
+OUTPUT_FILE  = "saved_model.pkl"
 
-def preprocess_and_tokenize(text):
-    """Noktalama işaretlerini TR kodlarına çevirir."""
-    print("Metin tokenlarına ayrılıyor (Regex)...")
-    
-    # Önce Wikipedia/özel format karakterlerini temizle
-    text = text.replace('@-@', '-')
-    text = text.replace('@ - @', '-')
-    text = text.replace('@.@', '.')
-    text = text.replace('@ . @', '.')
-    text = text.replace('@,@', ',')
-    text = text.replace('@ , @', ',')
-    text = re.sub(r'@\s*-\s*@', '-', text)
-    text = re.sub(r'@\s*\.\s*@', '.', text)
-    text = re.sub(r'@\s*,\s*@', ',', text)
-    # Kalan @ işaretlerini kaldır
-    text = text.replace('@', '')
-    
-    mapping = text_utils.PUNCTUATION_TOKENS
+
+def preprocess_and_tokenize(text: str) -> str:
+    """
+    Clean Wikipedia artefacts, lowercase, and replace punctuation with TR tokens.
+    Must match the transformation applied in _prepare_for_lookup at inference time.
+    """
+    # Wikipedia-specific patterns
+    text = re.sub(r"@\s*-\s*@", "-", text)
+    text = re.sub(r"@\s*\.\s*@", ".", text)
+    text = re.sub(r"@\s*,\s*@", ",", text)
+    text = text.replace("@", "")
+
+    # Lowercase so model tokens match the lowercased lookup at inference time
+    text = text.lower()
+
+    # Replace punctuation with TR tokens
+    mapping     = text_utils.PUNCTUATION_TOKENS
     sorted_keys = sorted(mapping.keys(), key=len, reverse=True)
-    pattern = '|'.join(map(re.escape, sorted_keys))
-    
-    def replace_func(match):
-        token = mapping[match.group(0)]
-        return f" {token} "
+    pattern     = "|".join(map(re.escape, sorted_keys))
 
-    processed_text = re.sub(pattern, replace_func, text)
-    processed_text = re.sub(r'\s+', ' ', processed_text).strip()
-    return processed_text
+    def replace_func(m):
+        return f" {mapping[m.group(0)]} "
 
-# --- ANA İŞLEM ---
+    text = re.sub(pattern, replace_func, text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
-print(f"1. '{INPUT_FILE}' okunuyor...")
 
+# ── main ──────────────────────────────────────────────────────────────────────
+
+print(f"1. Reading '{INPUT_FILE}'...")
 try:
     with open(INPUT_FILE, "r", encoding="utf-8") as f:
-        if READ_LIMIT > 0:
-            raw_data = f.read(READ_LIMIT)
-            print(f"   Güvenlik modu: Sadece ilk {READ_LIMIT} karakter okundu.")
-        else:
-            raw_data = f.read()
-            print("   Dosyanın tamamı okundu.")
+        raw = f.read(READ_LIMIT) if READ_LIMIT > 0 else f.read()
 
-    # Tokenizer işlemini uygula
-    tokenized_data = preprocess_and_tokenize(raw_data)
+    chars_read = len(raw)
+    print(f"   Read {chars_read:,} characters.")
 
-    # İşlenmiş veriyi kaydet
-    print(f"2. Tokenlanmış veri '{TEMP_TOKENIZED_FILE}' dosyasına yazılıyor...")
-    with open(TEMP_TOKENIZED_FILE, "w", encoding="utf-8") as f:
-        f.write(tokenized_data)
+    print("2. Tokenising (TR tokens)...")
+    tokenized = preprocess_and_tokenize(raw)
 
-    # Modeli eğit
-    print("3. Ngram Modeli eğitiliyor...")
-    
-    # DÜZELTME: Modeli boş başlatıp, dosyadan eğit diyoruz
-    ai = NgramPredictor(load_from_pickle=None)
-    ai.train_from_file(TEMP_TOKENIZED_FILE)
+    print(f"3. Writing temp file '{TEMP_FILE}'...")
+    with open(TEMP_FILE, "w", encoding="utf-8") as f:
+        f.write(tokenized)
 
-    # Modeli kaydet
-    print(f"4. Model '{MODEL_OUTPUT_FILE}' olarak kaydediliyor...")
-    
-    # Tüm sınıfı değil, sadece verileri kaydedelim (daha güvenli)
-    model_data = {
-        'word_counts': ai.word_counts,
-        'unigram_counts': ai.unigram_counts,
-        'bigram_counts': dict(ai.bigram_counts), # defaultdict pickle hatası verebilir, dict'e çevirdik
-        'trigram_counts': dict(ai.trigram_counts),
-        'total_words': ai.total_words
+    print(f"4. Training {MAX_N}-gram model (Stupid Backoff)...")
+    model = NgramPredictor(max_n=MAX_N)
+    model.train_from_file(TEMP_FILE)
+
+    print(f"5. Saving model to '{OUTPUT_FILE}'...")
+    ngram_counts_serialisable = {
+        n: {k: dict(v) for k, v in table.items()}
+        for n, table in model.ngram_counts.items()
     }
-    
-    with open(MODEL_OUTPUT_FILE, "wb") as f:
+    model_data = {
+        "word_counts":    model.word_counts,
+        "unigram_counts": model.unigram_counts,
+        "bigram_counts":  dict(model.bigram_counts),
+        "trigram_counts": dict(model.trigram_counts),
+        "ngram_counts":   ngram_counts_serialisable,
+        "max_n":          model.max_n,
+        "total_words":    model.total_words,
+    }
+    with open(OUTPUT_FILE, "wb") as f:
         pickle.dump(model_data, f)
 
-    print("\n✅ İŞLEM BAŞARILI!")
-    print(f"Artık 'python app.py' çalıştırabilirsin.")
+    print()
+    print("=" * 50)
+    print("  Model saved successfully!")
+    print(f"  max_n = {MAX_N}  (Stupid Backoff 7-gram -> 1-gram)")
+    print(f"  Vocab : {len(model.word_counts):,} unique tokens")
+    print(f"  Run 'python app.py' to start the server.")
+    print("=" * 50)
 
 except FileNotFoundError:
-    print(f"❌ HATA: '{INPUT_FILE}' bulunamadı! Dosya adını kontrol et.")
+    print(f"ERROR: '{INPUT_FILE}' not found.")
 except Exception as e:
-    print(f"❌ BEKLENMEYEN HATA: {e}")
+    import traceback
+    print(f"ERROR: {e}")
+    traceback.print_exc()

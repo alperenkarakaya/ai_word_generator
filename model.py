@@ -1,308 +1,293 @@
 """
-N-gram + LSTM Hybrid Tahmin Modeli
+N-gram Language Model with Stupid Backoff (orders 1..max_n).
+Primary text generation engine for the AI Text Generator.
+
+Stupid Backoff: at generation time, try the highest-order n-gram that has
+a matching context; fall back one order at a time until unigram.
 """
-from collections import Counter, defaultdict
 import os
 import pickle
 import random
+import re
+from collections import Counter, defaultdict
+
 from text_utils import (
-    full_clean, is_sentence_ending, is_punctuation_token,
-    restore_punctuation_from_tokens
+    full_clean,
+    is_punctuation_token,
+    is_sentence_ending,
+    replace_punctuation_with_tokens,
+    restore_punctuation_from_tokens,
 )
 
+
 class NgramPredictor:
-    """N-gram + LSTM hybrid tahmin modeli."""
-    
-    def __init__(self, load_from_pickle=None, lstm_model_path=None):
-        """
-        Modeli başlat.
-        Eğer load_from_pickle verilirse dosyadan yükler, verilmezse boş başlar (eğitim için).
-        lstm_model_path: LSTM model dosyası (opsiyonel)
-        """
-        self.word_counts = Counter()
+    """N-gram language model with Stupid Backoff from order max_n down to unigram."""
+
+    def __init__(self, load_from_pickle=None, max_n=7):
+        self.max_n = max_n
+        self.word_counts    = Counter()
         self.unigram_counts = Counter()
-        self.bigram_counts = defaultdict(Counter)
-        self.trigram_counts = defaultdict(Counter)
-        
-        self.total_words = 0
-        
-        # LSTM model (opsiyonel)
-        self.lstm_model = None
-        if lstm_model_path and os.path.exists(lstm_model_path):
-            try:
-                from transformer_model import TransformerPredictor
-                self.lstm_model = TransformerPredictor(lstm_model_path)
-                print("✅ LSTM model yüklendi (hybrid mod aktif)")
-            except Exception as e:
-                print(f"⚠️ LSTM model yüklenemedi: {e}")
-        
+        self.bigram_counts  = defaultdict(Counter)   # order 2 — also drives probability panel
+        self.trigram_counts = defaultdict(Counter)   # order 3 — also drives probability panel
+        self.ngram_counts   = {}   # {n: defaultdict(Counter)}  for n in 4..max_n
+        self.total_words    = 0
+
         if load_from_pickle:
             if os.path.exists(load_from_pickle):
                 self.load_from_pickle(load_from_pickle)
             else:
-                print(f"⚠️ Uyarı: {load_from_pickle} bulunamadı, boş model başlatıldı.")
+                print(f"Warning: {load_from_pickle} not found, starting empty.")
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _prepare_for_lookup(self, text: str) -> list:
+        """Convert user text into a token list matching the N-gram model's format."""
+        text = full_clean(text, lowercase=True)
+        text = replace_punctuation_with_tokens(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text.split() if text else []
+
+    def _predict_next_with_backoff(self, context: list):
+        """
+        Stupid Backoff: try max_n-gram first, fall back to (n-1)-gram,
+        down to bigram, then unigram.
+        Returns the sampled next token or None.
+        """
+        for n in range(self.max_n, 3, -1):
+            if n not in self.ngram_counts:
+                continue
+            if len(context) < n - 1:
+                continue
+            key   = tuple(context[-(n - 1):])
+            cands = self.ngram_counts[n].get(key)
+            if cands:
+                return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+
+        if len(context) >= 2:
+            key   = (context[-2], context[-1])
+            cands = self.trigram_counts.get(key)
+            if cands:
+                return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+
+        if context:
+            cands = self.bigram_counts.get(context[-1])
+            if cands:
+                return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+
+        if self.unigram_counts:
+            top = self.unigram_counts.most_common(200)
+            words, weights = zip(*top)
+            return random.choices(words, weights=weights, k=1)[0]
+
+        return None
+
+    # ── training ───────────────────────────────────────────────────────────────
 
     def train_from_file(self, filepath):
-        """Verilen dosyadan modeli eğitir."""
-        print(f"📚 Eğitim başlıyor: {filepath}")
-        
-        with open(filepath, 'r', encoding='utf-8') as f:
+        """Build n-gram tables for orders 1..max_n from a whitespace-tokenised file."""
+        print(f"Training {self.max_n}-gram model from: {filepath}")
+        with open(filepath, "r", encoding="utf-8") as f:
             text = f.read()
-            
-        # Kelimeleri ayır (zaten tokenized olduğu için split yeterli)
+
         tokens = text.split()
         self.total_words = len(tokens)
-        
-        print("   Tokenlar sayılıyor...")
-        
-        # 1. Unigram & Kelime Sayımları
+        print(f"   Total tokens: {self.total_words:,}")
+
         self.word_counts.update(tokens)
         self.unigram_counts.update(tokens)
-        
-        # 2. Bigram (İkili)
+
+        print("   Building bigram (2-gram) index...")
         for i in range(len(tokens) - 1):
-            w1, w2 = tokens[i], tokens[i+1]
-            self.bigram_counts[w1][w2] += 1
-            
-        # 3. Trigram (Üçlü)
+            self.bigram_counts[tokens[i]][tokens[i + 1]] += 1
+
+        print("   Building trigram (3-gram) index...")
         for i in range(len(tokens) - 2):
-            w1, w2, w3 = tokens[i], tokens[i+1], tokens[i+2]
-            # (kelime1, kelime2) -> kelime3
-            self.trigram_counts[(w1, w2)][w3] += 1
-            
-        print(f"✅ Eğitim tamamlandı!")
-        print(f"   - {len(self.unigram_counts)} benzersiz kelime")
-        print(f"   - {len(self.bigram_counts)} bigram kuralı")
-        print(f"   - {len(self.trigram_counts)} trigram kuralı")
+            self.trigram_counts[(tokens[i], tokens[i + 1])][tokens[i + 2]] += 1
+
+        self.ngram_counts = {}
+        for n in range(4, self.max_n + 1):
+            print(f"   Building {n}-gram index...")
+            table = defaultdict(Counter)
+            for i in range(len(tokens) - n + 1):
+                ctx = tuple(tokens[i: i + n - 1])
+                table[ctx][tokens[i + n - 1]] += 1
+            self.ngram_counts[n] = table
+
+        print(f"Training complete. {len(self.unigram_counts):,} unique tokens.")
+        for n, tbl in [(2, self.bigram_counts), (3, self.trigram_counts)]:
+            print(f"   {n}-gram contexts: {len(tbl):,}")
+        for n in range(4, self.max_n + 1):
+            print(f"   {n}-gram contexts: {len(self.ngram_counts[n]):,}")
+
+    # ── loading ────────────────────────────────────────────────────────────────
 
     def load_from_pickle(self, filepath):
-        """Pickle dosyasından yükle."""
-        print(f"📦 Model yükleniyor: {filepath}")
-        with open(filepath, 'rb') as f:
+        print(f"Loading N-gram model: {filepath}")
+        with open(filepath, "rb") as f:
             loaded = pickle.load(f)
 
-        # Dictionary formatındaysa
         if isinstance(loaded, dict):
-            self.word_counts = Counter(loaded.get('word_counts', {}))
-            self.unigram_counts = Counter(loaded.get('unigram_counts', {}))
-            # defaultdict tipini koru
-            bigram_raw = loaded.get('bigram_counts', {})
+            self.word_counts    = Counter(loaded.get("word_counts", {}))
+            self.unigram_counts = Counter(loaded.get("unigram_counts", {}))
+            self.total_words    = loaded.get("total_words", 0)
+            self.max_n          = loaded.get("max_n", 3)
+
             self.bigram_counts = defaultdict(Counter)
-            for k, v in bigram_raw.items():
+            for k, v in loaded.get("bigram_counts", {}).items():
                 self.bigram_counts[k] = Counter(v)
-            trigram_raw = loaded.get('trigram_counts', {})
+
             self.trigram_counts = defaultdict(Counter)
-            for k, v in trigram_raw.items():
+            for k, v in loaded.get("trigram_counts", {}).items():
                 self.trigram_counts[k] = Counter(v)
-            self.total_words = loaded.get('total_words', 0)
-            print(f"unigram_counts örnek: {list(self.unigram_counts.items())[:5]}")
-        # Sınıf örneği ise (__dict__ transferi)
-        elif hasattr(loaded, '__dict__'):
+
+            self.ngram_counts = {}
+            for n, raw in loaded.get("ngram_counts", {}).items():
+                table = defaultdict(Counter)
+                for k, v in raw.items():
+                    table[k] = Counter(v)
+                self.ngram_counts[int(n)] = table
+        elif hasattr(loaded, "__dict__"):
             self.__dict__.update(loaded.__dict__)
 
-        print(f"✅ Model yüklendi. Kelime haznesi: {len(self.word_counts):,}")
-        if not self.unigram_counts:
-            print("⚠️ Uyarı: unigram_counts boş veya yüklenemedi!")
+        print(f"N-gram model loaded. Vocab: {len(self.word_counts):,}, max_n: {self.max_n}")
 
-    def predict(self, text, use_tokens=True):
-        """Kelime tamamlama."""
+    # ── generation ─────────────────────────────────────────────────────────────
+
+    def predict(self, text):
+        """Ghost-text word completion (not directly used by generation endpoints)."""
         if not text or text.endswith(" "):
             return ""
-        
-        text_clean = full_clean(text, lowercase=True, use_tokens=use_tokens)
-        words = text_clean.split()
-        if not words: return ""
-        
-        current = words[-1]
-        
-        # Noktalama tokeni tamamlanmaz
-        if is_punctuation_token(current): return ""
-        
-        # Kelimeyi tamamla
+        tokens = self._prepare_for_lookup(text)
+        if not tokens:
+            return ""
+        current = tokens[-1]
+        if is_punctuation_token(current):
+            return ""
         matches = [w for w in self.word_counts if w.startswith(current)]
-        if not matches: return ""
-        
-        # En sık kullanılanı seç
-        best = max(matches, key=lambda w: self.word_counts[w])
-        suffix = best[len(current):]
-        
-        # Bir sonraki kelimeyi tahmin et (Bigram)
-        next_word_pred = ""
-        # Bigram anahtarı olarak tamamlanmış kelimeyi kullan
-        bigram_key = best
-        if bigram_key in self.bigram_counts:
-            candidates = self.bigram_counts[bigram_key]
-            if candidates:
-                # Ağırlıklı rastgele seçim
-                next_word = random.choices(list(candidates.keys()), weights=list(candidates.values()), k=1)[0]
-                next_word_pred = " " + next_word
+        if not matches:
+            return ""
+        best     = max(matches, key=lambda w: self.word_counts[w])
+        suffix   = best[len(current):]
+        cands    = self.bigram_counts.get(best)
+        next_tok = ""
+        if cands:
+            next_tok = " " + random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+        return restore_punctuation_from_tokens(suffix + next_tok)
 
-        result = suffix + next_word_pred
+    def predict_until_sentence_end(self, text, max_words=50):
+        """
+        Generate tokens using Stupid Backoff until a sentence-ending punctuation
+        is produced or max_words is reached.
+        Returns a string suffix to append to the current editor text.
+        """
+        tokens = self._prepare_for_lookup(text)
+        if not tokens:
+            return ""
 
-        if use_tokens:
-            result = restore_punctuation_from_tokens(result)
-            
-        return result
+        context   = list(tokens)
+        generated = []
+
+        trailing_space = text.endswith(" ")
+        if not trailing_space:
+            last = context[-1]
+            if not is_punctuation_token(last):
+                matches = [w for w in self.word_counts if w.startswith(last)]
+                if matches:
+                    best   = max(matches, key=lambda w: self.word_counts[w])
+                    suffix = best[len(last):]
+                    if suffix:
+                        generated.append(suffix)
+                    context[-1] = best
+
+        # If cursor was at end of a complete word (no suffix was appended),
+        # the result must start with a space so words don't run together.
+        need_leading_space = not trailing_space and not generated
+
+        for _ in range(max_words):
+            nw = self._predict_next_with_backoff(context)
+            if nw is None:
+                break
+            generated.append(nw)
+            context.append(nw)
+            if is_sentence_ending(nw):
+                break
+
+        result = " ".join(generated)
+        if need_leading_space and result:
+            result = " " + result
+        return restore_punctuation_from_tokens(result)
+
+    def predict_paragraph(self, text, max_sentences=5, max_words_per_sentence=50):
+        """
+        Chain predict_until_sentence_end to produce a multi-sentence paragraph.
+        Each call uses the full accumulated text as context so later sentences
+        are conditioned on earlier ones.
+        """
+        accumulated = text
+        completions = []
+        for _ in range(max_sentences):
+            comp = self.predict_until_sentence_end(accumulated, max_words=max_words_per_sentence)
+            if not comp.strip():
+                break
+            completions.append(comp)
+            accumulated = accumulated + comp
+        return "".join(completions)
+
+    # ── probability panel (UI) ─────────────────────────────────────────────────
 
     def get_probabilities(self, text, use_tokens=True):
-        """Olasılıkları hesapla (Front-end için)."""
-        # Basit versiyon: Sadece bigram ve trigram döndürür
-        text_clean = full_clean(text, lowercase=True, use_tokens=use_tokens)
-        words = text_clean.split()
-        
-        # Eğer input boşsa: sadece unigram döndür
-        if not words:
-            total_unigram = sum(self.unigram_counts.values())
-            unigram_probs = []
-            for word, count in self.unigram_counts.most_common(10):
-                display_word = restore_punctuation_from_tokens(word) if is_punctuation_token(word) else word
-                unigram_probs.append({
-                    "word": display_word,
-                    "probability": round((count/total_unigram)*100, 1)
-                })
+        """Return unigram / bigram / trigram probability tables for the UI panels."""
+        tokens = self._prepare_for_lookup(text) if text.strip() else []
+
+        total = sum(self.unigram_counts.values()) or 1
+        unigram_probs = [
+            {
+                "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
+                "probability": round(c / total * 100, 1),
+            }
+            for w, c in self.unigram_counts.most_common(10)
+        ]
+
+        if not tokens:
             return {
-                "unigram": unigram_probs,
-                "bigram": [],
-                "trigram": [],
-                "current_word": ""
+                "unigram": unigram_probs, "bigram": [], "trigram": [],
+                "current_word": "", "context": "",
             }
 
-        last_word = words[-1]
+        last = tokens[-1]
 
-        # Bigram Olasılıkları
         bigram_probs = []
-        if last_word in self.bigram_counts:
-            total = sum(self.bigram_counts[last_word].values())
-            for word, count in self.bigram_counts[last_word].most_common(5):
-                # Token ise restore et
-                display_word = restore_punctuation_from_tokens(word) if is_punctuation_token(word) else word
+        cands = self.bigram_counts.get(last, {})
+        if cands:
+            tot = sum(cands.values())
+            for w, c in Counter(cands).most_common(5):
                 bigram_probs.append({
-                    "word": display_word, 
-                    "probability": round((count/total)*100, 1)
+                    "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
+                    "probability": round(c / tot * 100, 1),
                 })
 
-        # Trigram Olasılıkları
         trigram_probs = []
-        if len(words) >= 2:
-            prev_word = words[-2]
-            key = (prev_word, last_word)
-            if key in self.trigram_counts:
-                total = sum(self.trigram_counts[key].values())
-                for word, count in self.trigram_counts[key].most_common(5):
-                    # Token ise restore et
-                    display_word = restore_punctuation_from_tokens(word) if is_punctuation_token(word) else word
+        ctx_display = ""
+        if len(tokens) >= 2:
+            key   = (tokens[-2], tokens[-1])
+            cands = self.trigram_counts.get(key, {})
+            if cands:
+                tot = sum(cands.values())
+                for w, c in Counter(cands).most_common(5):
                     trigram_probs.append({
-                        "word": display_word, 
-                        "probability": round((count/total)*100, 1)
+                        "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
+                        "probability": round(c / tot * 100, 1),
                     })
+            w1 = restore_punctuation_from_tokens(tokens[-2]) if is_punctuation_token(tokens[-2]) else tokens[-2]
+            w2 = restore_punctuation_from_tokens(tokens[-1]) if is_punctuation_token(tokens[-1]) else tokens[-1]
+            ctx_display = f"{w1} {w2}"
 
-        # Current word'u de restore et
-        display_current = restore_punctuation_from_tokens(last_word) if is_punctuation_token(last_word) else last_word
+        display_last = restore_punctuation_from_tokens(last) if is_punctuation_token(last) else last
 
-        # Unigram Olasılıkları (en sık 10 kelime)
-        total_unigram = sum(self.unigram_counts.values())
-        unigram_probs = []
-        for word, count in self.unigram_counts.most_common(10):
-            display_word = restore_punctuation_from_tokens(word) if is_punctuation_token(word) else word
-            unigram_probs.append({
-                "word": display_word,
-                "probability": round((count/total_unigram)*100, 1)
-            })
         return {
-            "unigram": unigram_probs,
-            "bigram": bigram_probs,
-            "trigram": trigram_probs,
-            "current_word": display_current
+            "unigram":      unigram_probs,
+            "bigram":       bigram_probs,
+            "trigram":      trigram_probs,
+            "current_word": display_last,
+            "context":      ctx_display,
         }
-
-    def predict_until_sentence_end(self, text, use_tokens=True, max_words=50):
-        """
-        Bir sonraki cümle bitirici noktalama işaretine kadar devam eder.
-        Cümle tamamlama için kullanılır (Shift+Tab).
-        
-        Args:
-            text: Başlangıç metni
-            use_tokens: Noktalama tokenları kullan
-            max_words: Maksimum kelime sayısı (sonsuz döngüyü önlemek için)
-            
-        Returns:
-            Tamamlanmış cümle parçası
-        """
-        # Metni temizle
-        text_clean = full_clean(text, lowercase=True, use_tokens=use_tokens)
-        words = text_clean.split()
-        
-        if not words:
-            return ""
-        
-        generated_words = []
-        last_word = words[-1]
-        
-        # Eğer son kelime noktalama tokeni değilse, önce kelimeyi tamamla
-        if not is_punctuation_token(last_word) and not text.endswith(" "):
-            # Kelimeyi tamamlama
-            matches = [w for w in self.word_counts if w.startswith(last_word)]
-            if matches:
-                # En sık kullanılanı seç
-                best = max(matches, key=lambda w: self.word_counts[w])
-                suffix = best[len(last_word):]
-                if suffix:
-                    generated_words.append(suffix)
-                # Context'i güncelle
-                words[-1] = best
-        
-        # Şimdi cümleyi devam ettir
-        current_context = words[-2:] if len(words) >= 2 else words[-1:]
-        
-        # Cümle bitirici token bulunana kadar devam et
-        for _ in range(max_words):
-            # Trigram varsa kullan
-            if len(current_context) >= 2:
-                key = tuple(current_context[-2:])
-                if key in self.trigram_counts:
-                    candidates = self.trigram_counts[key]
-                    if candidates:
-                        # Ağırlıklı rastgele seçim
-                        next_word = random.choices(
-                            list(candidates.keys()), 
-                            weights=list(candidates.values()), 
-                            k=1
-                        )[0]
-                        generated_words.append(next_word)
-                        current_context.append(next_word)
-                        
-                        # Cümle bitirici token kontrolü
-                        if is_sentence_ending(next_word):
-                            break
-                        continue
-            
-            # Bigram varsa kullan
-            if len(current_context) >= 1:
-                last_word = current_context[-1]
-                if last_word in self.bigram_counts:
-                    candidates = self.bigram_counts[last_word]
-                    if candidates:
-                        next_word = random.choices(
-                            list(candidates.keys()), 
-                            weights=list(candidates.values()), 
-                            k=1
-                        )[0]
-                        generated_words.append(next_word)
-                        current_context.append(next_word)
-                        
-                        # Cümle bitirici token kontrolü
-                        if is_sentence_ending(next_word):
-                            break
-                        continue
-            
-            # Hiçbir aday yoksa dur
-            break
-        
-        # sonucun oluşturulması
-        result = " ".join(generated_words)
-        
-        # tokenların restore edilmesi
-        if use_tokens:
-            result = restore_punctuation_from_tokens(result)
-        
-        return result
