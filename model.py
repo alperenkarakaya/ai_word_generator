@@ -392,18 +392,38 @@ class NgramPredictor:
             context[-1] = best      # "ca" → "cat" so step-2 context is correct
 
         # ── Step 2: generate up to max_ghost_words tokens (anti-loop) ──────────
-        # `seen` tracks non-punctuation tokens already emitted so the same word
-        # cannot be chosen again as the argmax — breaks deterministic loops.
-        seen      = {ghost_tokens[0]} if ghost_tokens else set()
+        # `seen_bigrams` is seeded with every (prev, tok) pair that already
+        # appears in the user's typed context.  When argmax would emit a token
+        # whose (prev, tok) bigram is in that set, we call _predict_ghost_token
+        # with that token blocked and take the next-best alternative.
+        # New bigrams produced during generation are also added so the within-chain
+        # sequence can't cycle either.
+        #
+        # This breaks the core degeneration case:
+        #   typed "the first time in his career, "
+        #   → seen_bigrams contains (the,first), (first,time), (time,in), …
+        #   → when ghost tries "the" → "first", (the,first) is blocked
+        #   → model falls back to the next-best word after "the"
+        seen_bigrams: set = set()
+        for i in range(len(tokens) - 1):
+            seen_bigrams.add((tokens[i], tokens[i + 1]))
+
         remaining = max_ghost_words - len(ghost_tokens)
         for _ in range(remaining):
-            tok = self._predict_ghost_token(context, seen)
+            tok = self._predict_most_likely_next(context)
             if tok is None:
                 break
+
+            prev = context[-1] if context else None
+            if prev is not None and (prev, tok) in seen_bigrams:
+                tok = self._predict_ghost_token(context, {tok})
+                if tok is None or (prev, tok) in seen_bigrams:
+                    break   # can't escape — stop here
+
             ghost_tokens.append(tok)
             context.append(tok)
-            if not is_punctuation_token(tok):   # punctuation may recur naturally
-                seen.add(tok)
+            if len(context) >= 2:
+                seen_bigrams.add((context[-2], context[-1]))
             if is_sentence_ending(tok):
                 break                           # include the period/!/?, then stop
 
