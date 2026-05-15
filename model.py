@@ -113,6 +113,36 @@ class NgramPredictor:
 
         return None
 
+    @staticmethod
+    def _tokens_to_text(tokens: list) -> str:
+        """
+        Convert a list of raw model tokens to display text.
+
+        Punctuation tokens (TR001–TR017) are attached directly to the preceding
+        word without a leading space; all other tokens are space-separated.
+
+        This avoids the ordering-dependency bug in restore_punctuation_from_tokens
+        where one TR token immediately followed by another could be missed.
+
+        Examples
+        --------
+        ["cat", "sat", "TR001"]            → "cat sat."
+        ["TR011", "TR002", "known", "as"]  → "), known as"
+        ["sat", "on", "the", "mat", "TR001", "he"] → "sat on the mat. he"
+        """
+        from text_utils import TOKEN_TO_PUNCTUATION
+        words = []
+        for tok in tokens:
+            if is_punctuation_token(tok):
+                punct = TOKEN_TO_PUNCTUATION.get(tok, tok)
+                if words:
+                    words[-1] = words[-1] + punct   # attach to previous word
+                else:
+                    words.append(punct)              # punctuation at very start
+            else:
+                words.append(tok)
+        return " ".join(words)
+
     # ── training ───────────────────────────────────────────────────────────────
 
     def train_from_file(self, filepath):
@@ -267,17 +297,31 @@ class NgramPredictor:
 
     # ── ghost text (inline word suggestion) ───────────────────────────────────
 
-    def get_ghost_text(self, text: str) -> str:
+    def get_ghost_text(self, text: str, max_ghost_words: int = 7) -> str:
         """
-        Returns the full string for the ghost overlay layer.
-        The ghost layer is positioned exactly over the textarea; the user sees:
-          - their own typed text (covered by the opaque textarea characters)
-          - the suggestion in gray beyond the cursor
+        Returns the full ghost-layer string showing up to max_ghost_words words ahead.
 
-        Rules:
-          - text ends with space  → predict next word, return text + word
-          - text ends with a partial word (not in vocab) → return prefix + best_completion
-          - text ends with a complete word (in vocab)    → predict next word, return text + ' ' + word
+        Algorithm
+        ---------
+        Step 1 — partial-word resolution:
+            If the cursor is inside an incomplete word (e.g. "ca"), find the
+            most-frequent word that starts with that prefix ("cat") and make it
+            the first ghost token.  The running context is updated so that step 2
+            predicts *after* "cat", not after the raw prefix "ca".
+
+        Step 2 — deterministic chain generation:
+            Call _predict_most_likely_next(context) up to max_ghost_words times.
+            Each new token is appended to `context` so word n+1 is conditioned on
+            words 1..n (not just the original user text).  Stop early when a
+            sentence-ending token (TR001 / TR003 / TR004) is produced — the
+            period is *included* in the ghost so the user sees where the sentence ends.
+
+        Step 3 — assemble:
+            Join ghost tokens with spaces, restore TR tokens to real punctuation,
+            then attach to the correct prefix of the user text.
+
+        The returned string is the FULL ghost-layer content (user text + suggestion).
+        The JS slices it at len(user_text) to colour the suggestion part gray.
         """
         tokens = self._prepare_for_lookup(text)
         if not text.strip() or not tokens:
@@ -286,32 +330,50 @@ class NgramPredictor:
         trailing_space = text.endswith(" ")
         last = tokens[-1]
 
-        if trailing_space:
-            tok = self._predict_most_likely_next(tokens)
-            if tok is None:
-                return ""
-            word = restore_punctuation_from_tokens(tok) if is_punctuation_token(tok) else tok
-            return text + word
-
-        if is_punctuation_token(last):
+        # Never suggest anything after a punctuation token (e.g. a period)
+        if not trailing_space and is_punctuation_token(last):
             return ""
 
-        if last in self.word_counts:
-            # Cursor is right after a complete word — show the predicted next word
-            tok = self._predict_most_likely_next(tokens)
-            if tok is None:
-                return ""
-            word = restore_punctuation_from_tokens(tok) if is_punctuation_token(tok) else tok
-            return text + " " + word
-        else:
-            # Cursor is inside a partial word — show the best completion
+        ghost_tokens = []            # raw model tokens that form the gray suggestion
+        context      = list(tokens)  # running context — grows as we generate
+
+        # ── Step 1: resolve partial word ─────────────────────────────────────
+        if not trailing_space and last not in self.word_counts:
             matches = [w for w in self.word_counts if w.startswith(last)]
             if not matches:
                 return ""
             best = max(matches, key=lambda w: self.word_counts[w])
+            ghost_tokens.append(best)
+            context[-1] = best      # "ca" → "cat" so step-2 context is correct
+
+        # ── Step 2: generate up to max_ghost_words tokens (deterministic) ────
+        remaining = max_ghost_words - len(ghost_tokens)
+        for _ in range(remaining):
+            tok = self._predict_most_likely_next(context)
+            if tok is None:
+                break
+            ghost_tokens.append(tok)
+            context.append(tok)
+            if is_sentence_ending(tok):
+                break               # include the period, then stop
+
+        if not ghost_tokens:
+            return ""
+
+        # ── Step 3: build ghost_full string ──────────────────────────────────
+        display = self._tokens_to_text(ghost_tokens)
+
+        if trailing_space:
+            # "the cat |…"  → "the cat sat on the mat."
+            return text + display
+        elif last in self.word_counts:
+            # "the cat|"    → "the cat sat on the mat."
+            return text + " " + display
+        else:
+            # "the ca|"     → "the cat sat on the mat."
             last_space = text.rfind(" ")
             prefix = text[: last_space + 1] if last_space >= 0 else ""
-            return prefix + best
+            return prefix + display
 
     # ── probability panel (UI) ─────────────────────────────────────────────────
 
