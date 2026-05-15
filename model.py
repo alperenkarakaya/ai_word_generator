@@ -113,6 +113,51 @@ class NgramPredictor:
 
         return None
 
+    def _predict_ghost_token(self, context: list, seen: set):
+        """
+        Deterministic Stupid Backoff for the ghost chain with a soft repetition
+        block: any token already in `seen` is skipped unless it is the only
+        candidate at every level (prevents argmax loops like "the first time in
+        his career, the first time in his career, ...").
+
+        Punctuation tokens are never added to `seen` by the caller so they can
+        legitimately recur.
+        """
+        def best_candidate(cands: dict):
+            filtered = {k: v for k, v in cands.items() if k not in seen}
+            pool = filtered if filtered else cands
+            return max(pool, key=pool.get)
+
+        for n in range(self.max_n, 3, -1):
+            if n not in self.ngram_counts:
+                continue
+            if len(context) < n - 1:
+                continue
+            key   = tuple(context[-(n - 1):])
+            cands = self.ngram_counts[n].get(key)
+            if cands:
+                return best_candidate(cands)
+
+        if len(context) >= 2:
+            key   = (context[-2], context[-1])
+            cands = self.trigram_counts.get(key)
+            if cands:
+                return best_candidate(cands)
+
+        if context:
+            cands = self.bigram_counts.get(context[-1])
+            if cands:
+                return best_candidate(cands)
+
+        if self.unigram_counts:
+            top      = dict(self.unigram_counts.most_common(200))
+            filtered = {k: v for k, v in top.items() if k not in seen}
+            pool     = filtered if filtered else top
+            if pool:
+                return max(pool, key=pool.get)
+
+        return None
+
     @staticmethod
     def _tokens_to_text(tokens: list) -> str:
         """
@@ -346,29 +391,37 @@ class NgramPredictor:
             ghost_tokens.append(best)
             context[-1] = best      # "ca" → "cat" so step-2 context is correct
 
-        # ── Step 2: generate up to max_ghost_words tokens (deterministic) ────
+        # ── Step 2: generate up to max_ghost_words tokens (anti-loop) ──────────
+        # `seen` tracks non-punctuation tokens already emitted so the same word
+        # cannot be chosen again as the argmax — breaks deterministic loops.
+        seen      = {ghost_tokens[0]} if ghost_tokens else set()
         remaining = max_ghost_words - len(ghost_tokens)
         for _ in range(remaining):
-            tok = self._predict_most_likely_next(context)
+            tok = self._predict_ghost_token(context, seen)
             if tok is None:
                 break
             ghost_tokens.append(tok)
             context.append(tok)
+            if not is_punctuation_token(tok):   # punctuation may recur naturally
+                seen.add(tok)
             if is_sentence_ending(tok):
-                break               # include the period, then stop
+                break                           # include the period/!/?, then stop
 
         if not ghost_tokens:
             return ""
 
         # ── Step 3: build ghost_full string ──────────────────────────────────
-        display = self._tokens_to_text(ghost_tokens)
+        display        = self._tokens_to_text(ghost_tokens)
+        first_is_punct = is_punctuation_token(ghost_tokens[0])
 
         if trailing_space:
             # "the cat |…"  → "the cat sat on the mat."
             return text + display
         elif last in self.word_counts:
             # "the cat|"    → "the cat sat on the mat."
-            return text + " " + display
+            # "the said|"   → "the said, he …"  (no space before comma)
+            sep = "" if first_is_punct else " "
+            return text + sep + display
         else:
             # "the ca|"     → "the cat sat on the mat."
             last_space = text.rfind(" ")
