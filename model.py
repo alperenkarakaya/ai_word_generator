@@ -47,12 +47,30 @@ class NgramPredictor:
         text = re.sub(r"\s+", " ", text).strip()
         return text.split() if text else []
 
-    def _predict_next_with_backoff(self, context: list):
+    def _sample_with_temperature(self, cands: dict, temperature: float) -> str:
+        """Weighted random sample with temperature scaling.
+        T > 1 flattens the distribution (more diverse), T < 1 sharpens it."""
+        if temperature == 1.0:
+            return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+        weights = [v ** (1.0 / temperature) for v in cands.values()]
+        return random.choices(list(cands), weights=weights, k=1)[0]
+
+    def _predict_next_with_backoff(self, context: list, temperature: float = 1.0):
         """
         Stupid Backoff (stochastic): try max_n-gram first, fall back to (n-1)-gram,
         down to bigram, then unigram.  Uses weighted random sampling for variety.
         Used by generate/sentence-complete flows.
+
+        When temperature > 1.0 we require at least 2 candidates before committing
+        to a match — a single-candidate entry at 7-gram is just memorised text and
+        temperature cannot add variety to a set of one.  Falling back forces the
+        model to reach a level (usually trigram/bigram) where multiple next words
+        are genuinely observed, giving temperature something to work with.
         """
+        # Single-candidate matches are deterministic regardless of temperature;
+        # only require plurality when the caller actually wants variety.
+        min_cands = 2 if temperature > 1.0 else 1
+
         for n in range(self.max_n, 3, -1):
             if n not in self.ngram_counts:
                 continue
@@ -60,24 +78,26 @@ class NgramPredictor:
                 continue
             key   = tuple(context[-(n - 1):])
             cands = self.ngram_counts[n].get(key)
-            if cands:
-                return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+            if cands and len(cands) >= min_cands:
+                return self._sample_with_temperature(cands, temperature)
 
         if len(context) >= 2:
             key   = (context[-2], context[-1])
             cands = self.trigram_counts.get(key)
+            if cands and len(cands) >= min_cands:
+                return self._sample_with_temperature(cands, temperature)
+            # Second pass: accept single-candidate trigram rather than dropping to bigram
             if cands:
-                return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+                return self._sample_with_temperature(cands, temperature)
 
         if context:
             cands = self.bigram_counts.get(context[-1])
             if cands:
-                return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
+                return self._sample_with_temperature(cands, temperature)
 
         if self.unigram_counts:
-            top = self.unigram_counts.most_common(200)
-            words, weights = zip(*top)
-            return random.choices(words, weights=weights, k=1)[0]
+            top = dict(self.unigram_counts.most_common(200))
+            return self._sample_with_temperature(top, temperature)
 
         return None
 
@@ -281,7 +301,7 @@ class NgramPredictor:
             next_tok = " " + random.choices(list(cands), weights=list(cands.values()), k=1)[0]
         return restore_punctuation_from_tokens(suffix + next_tok)
 
-    def predict_until_sentence_end(self, text, max_words=50):
+    def predict_until_sentence_end(self, text, max_words=50, temperature: float = 1.0):
         """
         Generate tokens using Stupid Backoff until a sentence-ending punctuation
         is produced or max_words is reached.
@@ -311,7 +331,7 @@ class NgramPredictor:
         need_leading_space = not trailing_space and not generated
 
         for _ in range(max_words):
-            nw = self._predict_next_with_backoff(context)
+            nw = self._predict_next_with_backoff(context, temperature)
             if nw is None:
                 break
             generated.append(nw)
@@ -324,7 +344,7 @@ class NgramPredictor:
             result = " " + result
         return restore_punctuation_from_tokens(result)
 
-    def predict_paragraph(self, text, max_sentences=5, max_words_per_sentence=50):
+    def predict_paragraph(self, text, max_sentences=5, max_words_per_sentence=50, temperature: float = 1.0):
         """
         Chain predict_until_sentence_end to produce a multi-sentence paragraph.
         Each call uses the full accumulated text as context so later sentences
@@ -333,7 +353,7 @@ class NgramPredictor:
         accumulated = text
         completions = []
         for _ in range(max_sentences):
-            comp = self.predict_until_sentence_end(accumulated, max_words=max_words_per_sentence)
+            comp = self.predict_until_sentence_end(accumulated, max_words=max_words_per_sentence, temperature=temperature)
             if not comp.strip():
                 break
             completions.append(comp)
@@ -342,7 +362,7 @@ class NgramPredictor:
 
     # ── ghost text (inline word suggestion) ───────────────────────────────────
 
-    def get_ghost_text(self, text: str, max_ghost_words: int = 7) -> str:
+    def get_ghost_text(self, text: str, max_ghost_words: int = 7, temperature: float = 1.0) -> str:
         """
         Returns the full ghost-layer string showing up to max_ghost_words words ahead.
 
@@ -391,41 +411,45 @@ class NgramPredictor:
             ghost_tokens.append(best)
             context[-1] = best      # "ca" → "cat" so step-2 context is correct
 
-        # ── Step 2: generate up to max_ghost_words tokens (anti-loop) ──────────
-        # `seen_bigrams` is seeded with every (prev, tok) pair that already
-        # appears in the user's typed context.  When argmax would emit a token
-        # whose (prev, tok) bigram is in that set, we call _predict_ghost_token
-        # with that token blocked and take the next-best alternative.
-        # New bigrams produced during generation are also added so the within-chain
-        # sequence can't cycle either.
-        #
-        # This breaks the core degeneration case:
-        #   typed "the first time in his career, "
-        #   → seen_bigrams contains (the,first), (first,time), (time,in), …
-        #   → when ghost tries "the" → "first", (the,first) is blocked
-        #   → model falls back to the next-best word after "the"
-        seen_bigrams: set = set()
-        for i in range(len(tokens) - 1):
-            seen_bigrams.add((tokens[i], tokens[i + 1]))
-
+        # ── Step 2: generate up to max_ghost_words tokens ────────────────────
         remaining = max_ghost_words - len(ghost_tokens)
-        for _ in range(remaining):
-            tok = self._predict_most_likely_next(context)
-            if tok is None:
-                break
 
-            prev = context[-1] if context else None
-            if prev is not None and (prev, tok) in seen_bigrams:
-                tok = self._predict_ghost_token(context, {tok})
-                if tok is None or (prev, tok) in seen_bigrams:
-                    break   # can't escape — stop here
+        if temperature > 1.0:
+            # Stochastic path: sample with temperature so each Tab gives a
+            # different word.  The min_cands fix in _predict_next_with_backoff
+            # ensures we always land on a level with real choices.
+            for _ in range(remaining):
+                tok = self._predict_next_with_backoff(context, temperature)
+                if tok is None:
+                    break
+                ghost_tokens.append(tok)
+                context.append(tok)
+                if is_sentence_ending(tok):
+                    break
+        else:
+            # Deterministic path (T == 1.0): stable argmax suggestion with
+            # anti-loop guard so ghost doesn't repeat the user's typed bigrams.
+            seen_bigrams: set = set()
+            for i in range(len(tokens) - 1):
+                seen_bigrams.add((tokens[i], tokens[i + 1]))
 
-            ghost_tokens.append(tok)
-            context.append(tok)
-            if len(context) >= 2:
-                seen_bigrams.add((context[-2], context[-1]))
-            if is_sentence_ending(tok):
-                break                           # include the period/!/?, then stop
+            for _ in range(remaining):
+                tok = self._predict_most_likely_next(context)
+                if tok is None:
+                    break
+
+                prev = context[-1] if context else None
+                if prev is not None and (prev, tok) in seen_bigrams:
+                    tok = self._predict_ghost_token(context, {tok})
+                    if tok is None or (prev, tok) in seen_bigrams:
+                        break
+
+                ghost_tokens.append(tok)
+                context.append(tok)
+                if len(context) >= 2:
+                    seen_bigrams.add((context[-2], context[-1]))
+                if is_sentence_ending(tok):
+                    break
 
         if not ghost_tokens:
             return ""
@@ -499,10 +523,40 @@ class NgramPredictor:
 
         display_last = restore_punctuation_from_tokens(last) if is_punctuation_token(last) else last
 
+        # 4-gram through 7-gram panels
+        _order_names = {4: "fourgram", 5: "fivegram", 6: "sixgram", 7: "sevengram"}
+        _ctx_names   = {4: "context4", 5: "context5", 6: "context6", 7: "context7"}
+        higher = {}
+        for n in range(4, self.max_n + 1):
+            name     = _order_names.get(n)
+            ctx_name = _ctx_names.get(n)
+            if name is None:
+                continue
+            probs   = []
+            ctx_str = ""
+            if len(tokens) >= n - 1 and n in self.ngram_counts:
+                key   = tuple(tokens[-(n - 1):])
+                cands = self.ngram_counts[n].get(key, {})
+                if cands:
+                    tot = sum(cands.values())
+                    for w, c in Counter(cands).most_common(5):
+                        probs.append({
+                            "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
+                            "probability": round(c / tot * 100, 1),
+                        })
+                ctx_tokens = tokens[-(n - 1):]
+                ctx_str = " ".join(
+                    restore_punctuation_from_tokens(t) if is_punctuation_token(t) else t
+                    for t in ctx_tokens
+                )
+            higher[name]     = probs
+            higher[ctx_name] = ctx_str
+
         return {
             "unigram":      unigram_probs,
             "bigram":       bigram_probs,
             "trigram":      trigram_probs,
             "current_word": display_last,
             "context":      ctx_display,
+            **higher,
         }

@@ -26,6 +26,11 @@
                         </option>
                     </select>
 
+                    <label class="engine-label" for="temperature-slider">Temperature</label>
+                    <input type="range" id="temperature-slider" class="temperature-slider"
+                           min="0.5" max="2.5" step="0.1" value="1.0">
+                    <span id="temperature-value" class="temperature-display">1.0</span>
+
                     {% if not ngram_ready %}
                     <span class="engine-status error">N-gram: {{ ngram_error }}</span>
                     {% endif %}
@@ -116,17 +121,78 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- 4-GRAM -->
+                    <div class="probability-card fourgram-card">
+                        <div class="card-header">
+                            <div class="header-left">
+                                <span class="gram-badge fourgram-badge">4-GRAM</span>
+                                <span class="card-title">4-gram</span>
+                            </div>
+                            <span class="context-label" title="" id="fourgram-ctx-label">After last 3 words</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="fourgram-list" class="predictions-list">
+                                <div class="no-data">Need ≥ 3 words</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5-GRAM -->
+                    <div class="probability-card fivegram-card">
+                        <div class="card-header">
+                            <div class="header-left">
+                                <span class="gram-badge fivegram-badge">5-GRAM</span>
+                                <span class="card-title">5-gram</span>
+                            </div>
+                            <span class="context-label" title="" id="fivegram-ctx-label">After last 4 words</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="fivegram-list" class="predictions-list">
+                                <div class="no-data">Need ≥ 4 words</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 6-GRAM -->
+                    <div class="probability-card sixgram-card">
+                        <div class="card-header">
+                            <div class="header-left">
+                                <span class="gram-badge sixgram-badge">6-GRAM</span>
+                                <span class="card-title">6-gram</span>
+                            </div>
+                            <span class="context-label" title="" id="sixgram-ctx-label">After last 5 words</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="sixgram-list" class="predictions-list">
+                                <div class="no-data">Need ≥ 5 words</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 7-GRAM -->
+                    <div class="probability-card sevengram-card">
+                        <div class="card-header">
+                            <div class="header-left">
+                                <span class="gram-badge sevengram-badge">7-GRAM</span>
+                                <span class="card-title">7-gram</span>
+                            </div>
+                            <span class="context-label" title="" id="sevengram-ctx-label">After last 6 words</span>
+                        </div>
+                        <div class="card-body">
+                            <div id="sevengram-list" class="predictions-list">
+                                <div class="no-data">Need ≥ 6 words</div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="info-banner">
                     <span class="info-icon">ℹ</span>
                     <span class="info-text">
-                        <strong>1-gram</strong>: pure word frequency |
-                        <strong>2-gram</strong>: conditions on last 1 word |
-                        <strong>3-gram</strong>: conditions on last 2 words.
-                        During generation the model uses up to
-                        <strong>{{ ngram_max_n }}-gram</strong> context
-                        with Stupid Backoff.
+                        Higher-order cards go sparse quickly — this is why Stupid Backoff exists.
+                        <strong>Temperature</strong>: 1.0 = default · &gt;1.0 = more variety · &lt;1.0 = more focused.
+                        Generation uses up to <strong>{{ ngram_max_n }}-gram</strong> context.
                     </span>
                 </div>
             </section>

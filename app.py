@@ -80,9 +80,10 @@ def predict_sentence():
     engine     : str  — "ngram" (default) or "transformer"
     max_tokens : int  — max new tokens / words (default 100)
     """
-    engine     = request.args.get("engine", "ngram")
-    text       = request.args.get("text", "")
-    max_tokens = int(request.args.get("max_tokens", 100))
+    engine      = request.args.get("engine", "ngram")
+    text        = request.args.get("text", "")
+    max_tokens  = int(request.args.get("max_tokens", 100))
+    temperature = float(request.args.get("temperature", 1.0))
 
     if engine == "transformer":
         if transformer is None:
@@ -103,7 +104,7 @@ def predict_sentence():
             "hint":  "Run create_pickle.py to build the model first.",
         }), 503
     try:
-        completion = ngram.predict_until_sentence_end(text, max_words=max_tokens)
+        completion = ngram.predict_until_sentence_end(text, max_words=max_tokens, temperature=temperature)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     return jsonify({"completion": completion})
@@ -123,6 +124,7 @@ def predict_paragraph():
     engine        = request.args.get("engine", "ngram")
     text          = request.args.get("text", "")
     max_sentences = int(request.args.get("max_sentences", 5))
+    temperature   = float(request.args.get("temperature", 1.0))
 
     if engine == "transformer":
         if transformer is None:
@@ -140,7 +142,7 @@ def predict_paragraph():
             "hint":  "Run create_pickle.py first.",
         }), 503
     try:
-        paragraph = ngram.predict_paragraph(text, max_sentences=max_sentences)
+        paragraph = ngram.predict_paragraph(text, max_sentences=max_sentences, temperature=temperature)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
     return jsonify({"completion": paragraph})
@@ -158,8 +160,9 @@ def predict_next():
     """
     if ngram is None:
         return jsonify({"ghost": ""})
-    text  = request.args.get("text", "")
-    ghost = ngram.get_ghost_text(text)
+    text        = request.args.get("text", "")
+    temperature = float(request.args.get("temperature", 1.0))
+    ghost = ngram.get_ghost_text(text, temperature=temperature)
     return jsonify({"ghost": ghost})
 
 

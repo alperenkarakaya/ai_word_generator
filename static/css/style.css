@@ -15,9 +15,13 @@
     --text-ghost: #999999;
     --accent-primary: #4285f4;
     --accent-secondary: #1967d2;
-    --unigram-color: #34a853;
-    --bigram-color:  #f5576c;
-    --trigram-color: #00b0ff;
+    --unigram-color:  #34a853;
+    --bigram-color:   #f5576c;
+    --trigram-color:  #00b0ff;
+    --fourgram-color: #ff6b35;
+    --fivegram-color: #7c3aed;
+    --sixgram-color:  #0d9488;
+    --sevengram-color:#e11d48;
     
     /* Spacing */
     --spacing-xs: 8px;
@@ -273,6 +277,26 @@ kbd {
     color: white;
 }
 
+.fourgram-badge {
+    background: linear-gradient(135deg, #ffa85c 0%, var(--fourgram-color) 100%);
+    color: white;
+}
+
+.fivegram-badge {
+    background: linear-gradient(135deg, #a78bfa 0%, var(--fivegram-color) 100%);
+    color: white;
+}
+
+.sixgram-badge {
+    background: linear-gradient(135deg, #2dd4bf 0%, var(--sixgram-color) 100%);
+    color: white;
+}
+
+.sevengram-badge {
+    background: linear-gradient(135deg, #fb7185 0%, var(--sevengram-color) 100%);
+    color: white;
+}
+
 .card-title {
     font-size: 0.9rem;
     font-weight:  600;
@@ -503,6 +527,20 @@ kbd {
 .engine-status.error {
     background: #fde8e8;
     color: #c0392b;
+}
+
+.temperature-slider {
+    width: 90px;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+.temperature-display {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--accent-primary);
+    min-width: 28px;
+    text-align: center;
 }
 
 /* ===== Warning banner ===== */
