@@ -8,6 +8,7 @@ const fourgramList     = document.getElementById('fourgram-list');
 const fivegramList     = document.getElementById('fivegram-list');
 const sixgramList      = document.getElementById('sixgram-list');
 const sevengramList    = document.getElementById('sevengram-list');
+const levelList        = document.getElementById('level-list');
 const bigramWordSpan   = document.getElementById('bigram-word');
 const trigramCtxSpan   = document.getElementById('trigram-context');
 const fourgramCtxLabel = document.getElementById('fourgram-ctx-label');
@@ -117,7 +118,8 @@ function handleInput() {
         if (getEngine() === 'ngram') {
             const seq = ++ghostSeq;
             try {
-                const r = await fetch(`/predict_next?temperature=${getTemperature()}&text=` + encodeURIComponent(text));
+                // Ghost is deterministic — temperature is intentionally not sent.
+                const r = await fetch(`/predict_next?text=` + encodeURIComponent(text));
                 const d = await r.json();
                 if (seq === ghostSeq) {
                     renderGhost(text, d.ghost || '');
@@ -126,7 +128,7 @@ function handleInput() {
         }
 
         try {
-            const r = await fetch('/probabilities?text=' + encodeURIComponent(text));
+            const r = await fetch(`/probabilities?temperature=${getTemperature()}&text=` + encodeURIComponent(text));
             renderProbabilities(await r.json());
         } catch (_) {}
     }, 100);
@@ -216,6 +218,8 @@ function truncateCtx(ctx, maxLen = 24) {
 }
 
 function renderProbabilities(data) {
+    renderLevels(levelList, data.levels || []);
+
     renderList(unigramList, data.unigram || [], 'Start typing…');
 
     bigramWordSpan.textContent = data.current_word || '—';
@@ -269,6 +273,30 @@ function renderList(container, items, emptyMsg) {
                     <div class="probability-bar" style="width:${item.probability}%"></div>
                 </div>
                 <span class="probability-value">${item.probability}%</span>
+                ${item.count != null ? `<span class="count-value" title="raw count">×${item.count}</span>` : ''}
+            </div>
+        </div>`
+    ).join('');
+}
+
+// ── Level Selection panel (Stage-1 P(level=n), temperature-aware) ───────────────
+function renderLevels(container, levels) {
+    if (!container) return;
+    if (!levels.length) {
+        container.innerHTML = `<div class="no-data">Start typing…</div>`;
+        return;
+    }
+    container.innerHTML = levels.map((lv, i) => `
+        <div class="prediction-item${i === 0 ? ' top-choice' : ''}">
+            <div class="word-info">
+                <span class="gram-badge level-badge">${lv.label}</span>
+            </div>
+            <div class="probability-info">
+                <div class="probability-bar-container">
+                    <div class="probability-bar" style="width:${lv.probability}%"></div>
+                </div>
+                <span class="probability-value">${lv.probability}%</span>
+                <span class="count-value" title="total evidence at this order">×${lv.count}</span>
             </div>
         </div>`
     ).join('');

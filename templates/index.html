@@ -72,9 +72,27 @@
                     <h2 class="section-title">N-gram Probability View</h2>
                     <p class="section-description">
                         Statistical next-word probabilities from the N-gram model.
-                        Generation uses <strong>Stupid Backoff</strong> — tries the
-                        highest order first and falls back when no match is found.
+                        Generation uses <strong>hierarchical sampling</strong>:
+                        Stage&nbsp;1 samples which n-gram order to use (favouring
+                        higher orders), Stage&nbsp;2 samples a word from that
+                        order's top-5 — both shaped by temperature.
                     </p>
+                </div>
+
+                <!-- Stage 1 — level selection distribution -->
+                <div class="probability-card level-card">
+                    <div class="card-header">
+                        <div class="header-left">
+                            <span class="gram-badge level-badge">STAGE 1</span>
+                            <span class="card-title">Level Selection</span>
+                        </div>
+                        <span class="context-label">P(order) at current temperature</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="level-list" class="predictions-list">
+                            <div class="no-data">Start typing…</div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="probabilities-container" class="probabilities-grid">

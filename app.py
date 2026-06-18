@@ -180,9 +180,9 @@ def predict_next():
     """
     if ngram is None:
         return jsonify({"ghost": ""})
-    text        = request.args.get("text", "")
-    temperature = safe_float(request.args.get("temperature"), 1.0, lo=0.1, hi=5.0)
-    ghost = ngram.get_ghost_text(text, temperature=temperature)
+    text = request.args.get("text", "")
+    # Ghost autocomplete is deterministic and temperature-independent by design.
+    ghost = ngram.get_ghost_text(text)
     return jsonify({"ghost": ghost})
 
 
@@ -192,9 +192,10 @@ def get_probabilities():
     if ngram is None:
         return jsonify({"unigram": [], "bigram": [], "trigram": [],
                         "current_word": "", "context": ""})
-    text       = request.args.get("text", "")
-    use_tokens = request.args.get("use_tokens", "true").lower() == "true"
-    return jsonify(ngram.get_probabilities(text, use_tokens=use_tokens))
+    text        = request.args.get("text", "")
+    use_tokens  = request.args.get("use_tokens", "true").lower() == "true"
+    temperature = safe_float(request.args.get("temperature"), 1.0, lo=0.1, hi=5.0)
+    return jsonify(ngram.get_probabilities(text, use_tokens=use_tokens, temperature=temperature))
 
 
 @app.route("/health")

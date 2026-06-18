@@ -5,11 +5,12 @@ Primary text generation engine for the AI Text Generator.
 Stupid Backoff: at generation time, try the highest-order n-gram that has
 a matching context; fall back one order at a time until unigram.
 """
+import math
 import os
 import pickle
 import random
 import re
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 
 from text_utils import (
     full_clean,
@@ -18,6 +19,16 @@ from text_utils import (
     replace_punctuation_with_tokens,
     restore_punctuation_from_tokens,
 )
+
+# ── hierarchical-sampler tuning (sweep these for the thesis) ──────────────────
+GAMMA       = 1.3   # Stage-1 order-preference exponent: score_n ∝ n**GAMMA.
+                    #   higher  → stronger pull toward higher-order n-grams.
+KAPPA       = 3.0   # Stage-1 confidence saturation: conf_n = 1 - exp(-C_n/KAPPA).
+                    #   down-weights high orders backed by only 1-2 observations.
+TOPK        = 5     # Stage-2 candidate truncation (keep top-K by count).
+REP_WINDOW  = 8     # repetition guard: how many recent words to remember.
+REP_PENALTY = 3.0   # repetition guard: divide a candidate's count by this if it
+                    #   appeared in the recent window (soft, survives temperature).
 
 
 class NgramPredictor:
@@ -55,51 +66,97 @@ class NgramPredictor:
         weights = [v ** (1.0 / temperature) for v in cands.values()]
         return random.choices(list(cands), weights=weights, k=1)[0]
 
-    def _predict_next_with_backoff(self, context: list, temperature: float = 1.0):
+    # ── hierarchical sampler (generation only — NOT ghost) ──────────────────────
+
+    @staticmethod
+    def _tempered(scores: dict, temperature: float) -> dict:
         """
-        Stupid Backoff (stochastic): try max_n-gram first, fall back to (n-1)-gram,
-        down to bigram, then unigram.  Uses weighted random sampling for variety.
-        Used by generate/sentence-complete flows.
+        Unified tempered-softmax-over-scores operator shared by both sampling
+        stages:  q_i = x_i**(1/T) / Σ_j x_j**(1/T).
 
-        When temperature > 1.0 we require at least 2 candidates before committing
-        to a match — a single-candidate entry at 7-gram is just memorised text and
-        temperature cannot add variety to a set of one.  Falling back forces the
-        model to reach a level (usually trigram/bigram) where multiple next words
-        are genuinely observed, giving temperature something to work with.
+          T → 0⁺  → collapses to argmax (the old deterministic behaviour)
+          T = 1   → proportional to the raw scores
+          T → ∞   → uniform
+
+        `scores` maps key → positive number (count, or order-preference weight).
+        Returns key → probability (sums to 1).
         """
-        # Single-candidate matches are deterministic regardless of temperature;
-        # only require plurality when the caller actually wants variety.
-        min_cands = 2 if temperature > 1.0 else 1
+        T = max(temperature, 1e-3)
+        powered = {k: (max(v, 1e-12) ** (1.0 / T)) for k, v in scores.items()}
+        tot = sum(powered.values()) or 1.0
+        return {k: p / tot for k, p in powered.items()}
 
-        for n in range(self.max_n, 3, -1):
-            if n not in self.ngram_counts:
+    def _cands_at_level(self, context: list, n: int):
+        """Return the candidate Counter for order n given context, or None.
+
+        All tables store Counters, so callers can use .most_common() directly.
+        Level 1 (unigram) is context-independent and always available."""
+        if n == 1:
+            return self.unigram_counts or None
+        if n == 2:
+            return self.bigram_counts.get(context[-1]) if context else None
+        if n == 3:
+            if len(context) < 2:
+                return None
+            return self.trigram_counts.get((context[-2], context[-1]))
+        # n >= 4
+        if n not in self.ngram_counts or len(context) < n - 1:
+            return None
+        return self.ngram_counts[n].get(tuple(context[-(n - 1):]))
+
+    def _level_scores(self, context: list) -> dict:
+        """
+        Stage-1 raw scores per available order:
+
+            score_n = (n ** GAMMA) * (1 - exp(-C_n / KAPPA))
+
+        where C_n is the total evidence (sum of counts) at that context's
+        n-gram entry.  The order term favours higher n; the confidence term
+        suppresses high orders that were only seen once or twice (which would
+        otherwise force verbatim, memorised continuations).
+        Returns {n: score} for every order that has candidates.
+        """
+        scores = {}
+        for n in range(1, self.max_n + 1):
+            cands = self._cands_at_level(context, n)
+            if not cands:
                 continue
-            if len(context) < n - 1:
-                continue
-            key   = tuple(context[-(n - 1):])
-            cands = self.ngram_counts[n].get(key)
-            if cands and len(cands) >= min_cands:
-                return self._sample_with_temperature(cands, temperature)
+            c_n  = sum(cands.values())
+            conf = 1.0 - math.exp(-c_n / KAPPA)
+            scores[n] = (n ** GAMMA) * conf
+        return scores
 
-        if len(context) >= 2:
-            key   = (context[-2], context[-1])
-            cands = self.trigram_counts.get(key)
-            if cands and len(cands) >= min_cands:
-                return self._sample_with_temperature(cands, temperature)
-            # Second pass: accept single-candidate trigram rather than dropping to bigram
-            if cands:
-                return self._sample_with_temperature(cands, temperature)
+    def _sample_token(self, context: list, temperature: float = 1.0, recent=None):
+        """
+        Hierarchical probabilistic next-token sampler used by sentence and
+        paragraph generation (NOT by ghost autocomplete, which stays deterministic).
 
-        if context:
-            cands = self.bigram_counts.get(context[-1])
-            if cands:
-                return self._sample_with_temperature(cands, temperature)
+        Stage 1 — sample which n-gram order to use from the tempered level
+                  distribution τ(score_n ; T).
+        Stage 2 — within that order, keep the top-K candidates by count, apply a
+                  repetition penalty, and sample from τ(count_i ; T).
+        """
+        recent = recent or ()
+        level_scores = self._level_scores(context)
+        if not level_scores:
+            return None
 
-        if self.unigram_counts:
-            top = dict(self.unigram_counts.most_common(200))
-            return self._sample_with_temperature(top, temperature)
+        # Stage 1 — choose an order.
+        level_probs = self._tempered(level_scores, temperature)
+        chosen_n = random.choices(
+            list(level_probs), weights=list(level_probs.values()), k=1
+        )[0]
 
-        return None
+        # Stage 2 — choose a word within that order.
+        cands = self._cands_at_level(context, chosen_n)
+        word_scores = {}
+        for w, c in cands.most_common(TOPK):
+            penalty = REP_PENALTY if w in recent else 1.0
+            word_scores[w] = c / penalty
+        word_probs = self._tempered(word_scores, temperature)
+        return random.choices(
+            list(word_probs), weights=list(word_probs.values()), k=1
+        )[0]
 
     def _predict_most_likely_next(self, context: list):
         """
@@ -330,12 +387,32 @@ class NgramPredictor:
         # the result must start with a space so words don't run together.
         need_leading_space = not trailing_space and not generated
 
+        recent: deque = deque(maxlen=REP_WINDOW)   # words for the repetition penalty
+        produced_bigrams: set = set()              # anti-loop guard
+
         for _ in range(max_words):
-            nw = self._predict_next_with_backoff(context, temperature)
+            nw = self._sample_token(context, temperature, recent)
             if nw is None:
                 break
+
+            # Anti-loop: if this (prev, nw) bigram was already emitted, resample a
+            # few times before giving up.  Soft and bounded so it can't spin.
+            prev = context[-1] if context else None
+            attempts = 0
+            while (prev, nw) in produced_bigrams and attempts < 3:
+                nw = self._sample_token(context, temperature, recent)
+                if nw is None:
+                    break
+                attempts += 1
+            if nw is None:
+                break
+
             generated.append(nw)
             context.append(nw)
+            if prev is not None:
+                produced_bigrams.add((prev, nw))
+            if not is_punctuation_token(nw):
+                recent.append(nw)
             if is_sentence_ending(nw):
                 break
 
@@ -362,9 +439,14 @@ class NgramPredictor:
 
     # ── ghost text (inline word suggestion) ───────────────────────────────────
 
-    def get_ghost_text(self, text: str, max_ghost_words: int = 7, temperature: float = 1.0) -> str:
+    def get_ghost_text(self, text: str, max_ghost_words: int = 7) -> str:
         """
         Returns the full ghost-layer string showing up to max_ghost_words words ahead.
+
+        Ghost autocomplete is intentionally DETERMINISTIC and temperature-free:
+        it is a UI guidance feature, so the same editor state must always yield
+        the same suggestion (stable, repeatable, demo-safe).  Creative variety
+        lives in sentence/paragraph *generation*, which uses _sample_token.
 
         Algorithm
         ---------
@@ -375,11 +457,12 @@ class NgramPredictor:
             predicts *after* "cat", not after the raw prefix "ca".
 
         Step 2 — deterministic chain generation:
-            Call _predict_most_likely_next(context) up to max_ghost_words times.
-            Each new token is appended to `context` so word n+1 is conditioned on
-            words 1..n (not just the original user text).  Stop early when a
-            sentence-ending token (TR001 / TR003 / TR004) is produced — the
-            period is *included* in the ghost so the user sees where the sentence ends.
+            Call _predict_most_likely_next(context) up to max_ghost_words times,
+            with an anti-loop guard so the ghost doesn't repeat the user's typed
+            bigrams.  Each new token is appended to `context` so word n+1 is
+            conditioned on words 1..n (not just the original user text).  Stop
+            early when a sentence-ending token (TR001 / TR003 / TR004) is produced
+            — the period is *included* so the user sees where the sentence ends.
 
         Step 3 — assemble:
             Join ghost tokens with spaces, restore TR tokens to real punctuation,
@@ -411,45 +494,32 @@ class NgramPredictor:
             ghost_tokens.append(best)
             context[-1] = best      # "ca" → "cat" so step-2 context is correct
 
-        # ── Step 2: generate up to max_ghost_words tokens ────────────────────
+        # ── Step 2: deterministic chain generation ───────────────────────────
+        # Stable argmax suggestion with an anti-loop guard so the ghost doesn't
+        # repeat the user's typed bigrams.  No temperature, no sampling.
         remaining = max_ghost_words - len(ghost_tokens)
 
-        if temperature > 1.0:
-            # Stochastic path: sample with temperature so each Tab gives a
-            # different word.  The min_cands fix in _predict_next_with_backoff
-            # ensures we always land on a level with real choices.
-            for _ in range(remaining):
-                tok = self._predict_next_with_backoff(context, temperature)
-                if tok is None:
-                    break
-                ghost_tokens.append(tok)
-                context.append(tok)
-                if is_sentence_ending(tok):
-                    break
-        else:
-            # Deterministic path (T == 1.0): stable argmax suggestion with
-            # anti-loop guard so ghost doesn't repeat the user's typed bigrams.
-            seen_bigrams: set = set()
-            for i in range(len(tokens) - 1):
-                seen_bigrams.add((tokens[i], tokens[i + 1]))
+        seen_bigrams: set = set()
+        for i in range(len(tokens) - 1):
+            seen_bigrams.add((tokens[i], tokens[i + 1]))
 
-            for _ in range(remaining):
-                tok = self._predict_most_likely_next(context)
-                if tok is None:
+        for _ in range(remaining):
+            tok = self._predict_most_likely_next(context)
+            if tok is None:
+                break
+
+            prev = context[-1] if context else None
+            if prev is not None and (prev, tok) in seen_bigrams:
+                tok = self._predict_ghost_token(context, {tok})
+                if tok is None or (prev, tok) in seen_bigrams:
                     break
 
-                prev = context[-1] if context else None
-                if prev is not None and (prev, tok) in seen_bigrams:
-                    tok = self._predict_ghost_token(context, {tok})
-                    if tok is None or (prev, tok) in seen_bigrams:
-                        break
-
-                ghost_tokens.append(tok)
-                context.append(tok)
-                if len(context) >= 2:
-                    seen_bigrams.add((context[-2], context[-1]))
-                if is_sentence_ending(tok):
-                    break
+            ghost_tokens.append(tok)
+            context.append(tok)
+            if len(context) >= 2:
+                seen_bigrams.add((context[-2], context[-1]))
+            if is_sentence_ending(tok):
+                break
 
         if not ghost_tokens:
             return ""
@@ -474,8 +544,14 @@ class NgramPredictor:
 
     # ── probability panel (UI) ─────────────────────────────────────────────────
 
-    def get_probabilities(self, text, use_tokens=True):
-        """Return unigram / bigram / trigram probability tables for the UI panels."""
+    def get_probabilities(self, text, use_tokens=True, temperature: float = 1.0):
+        """Return unigram / bigram / trigram probability tables for the UI panels.
+
+        Each per-level card shows the RAW empirical distribution (count +
+        count-normalised %) for the current context — temperature-independent,
+        the honest statistical view.  The separate `levels` field is the
+        temperature-aware Stage-1 distribution P(level=n) that the *generator*
+        would sample from, which drives the Level Selection panel."""
         tokens = self._prepare_for_lookup(text) if text.strip() else []
 
         total = sum(self.unigram_counts.values()) or 1
@@ -483,6 +559,7 @@ class NgramPredictor:
             {
                 "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
                 "probability": round(c / total * 100, 1),
+                "count": c,
             }
             for w, c in self.unigram_counts.most_common(10)
         ]
@@ -490,7 +567,7 @@ class NgramPredictor:
         if not tokens:
             return {
                 "unigram": unigram_probs, "bigram": [], "trigram": [],
-                "current_word": "", "context": "",
+                "current_word": "", "context": "", "levels": [],
             }
 
         last = tokens[-1]
@@ -503,6 +580,7 @@ class NgramPredictor:
                 bigram_probs.append({
                     "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
                     "probability": round(c / tot * 100, 1),
+                    "count": c,
                 })
 
         trigram_probs = []
@@ -516,6 +594,7 @@ class NgramPredictor:
                     trigram_probs.append({
                         "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
                         "probability": round(c / tot * 100, 1),
+                        "count": c,
                     })
             w1 = restore_punctuation_from_tokens(tokens[-2]) if is_punctuation_token(tokens[-2]) else tokens[-2]
             w2 = restore_punctuation_from_tokens(tokens[-1]) if is_punctuation_token(tokens[-1]) else tokens[-1]
@@ -543,6 +622,7 @@ class NgramPredictor:
                         probs.append({
                             "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
                             "probability": round(c / tot * 100, 1),
+                            "count": c,
                         })
                 ctx_tokens = tokens[-(n - 1):]
                 ctx_str = " ".join(
@@ -552,11 +632,26 @@ class NgramPredictor:
             higher[name]     = probs
             higher[ctx_name] = ctx_str
 
+        # ── Stage-1 level distribution P(level=n) at this temperature ─────────
+        levels = []
+        level_scores = self._level_scores(tokens)
+        if level_scores:
+            level_probs = self._tempered(level_scores, temperature)
+            for n in sorted(level_probs, reverse=True):
+                cands = self._cands_at_level(tokens, n)
+                levels.append({
+                    "level":       n,
+                    "label":       f"{n}-gram",
+                    "probability": round(level_probs[n] * 100, 1),
+                    "count":       sum(cands.values()) if cands else 0,
+                })
+
         return {
             "unigram":      unigram_probs,
             "bigram":       bigram_probs,
             "trigram":      trigram_probs,
             "current_word": display_last,
             "context":      ctx_display,
+            "levels":       levels,
             **higher,
         }

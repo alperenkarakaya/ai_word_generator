@@ -106,40 +106,44 @@ generation time to pick the next word.
 | `total_words` | `int` | Total token count in training data |
 | `max_n` | `int` | Maximum n-gram order (default: 7) |
 
-### Stupid Backoff Algorithm
+### Hierarchical Sampling (Generation)
 
-Stupid Backoff is a simplified backoff strategy (no discounting, no normalization) that
-tries the highest-order n-gram first and falls back to lower orders when no match exists:
+Sentence and paragraph generation no longer use deterministic backoff. Instead they use a
+two-stage hierarchical sampler (`_sample_token`) built on a single tempered operator:
 
 ```
-predict_next(context):
-    for n in [7, 6, 5, 4]:           # Higher-order n-grams
-        key = context[-(n-1):]
-        candidates = ngram_counts[n][key]
-        if candidates exist and len(candidates) >= min_cands:
-            return sample(candidates, temperature)
+τ(x ; T)_i = x_i^(1/T) / Σ_j x_j^(1/T)      # T→0: argmax · T=1: proportional · T→∞: uniform
 
-    key = (context[-2], context[-1])  # Trigram
-    candidates = trigram_counts[key]
-    if candidates: return sample(candidates, temperature)
+sample_token(context, T):
+    # Stage 1 — sample which n-gram order to use
+    for n in available orders:
+        C_n      = total evidence at this context's n-gram entry
+        score_n  = (n ** GAMMA) * (1 - exp(-C_n / KAPPA))   # favour high, well-supported orders
+    n* ~ τ(score ; T)
 
-    candidates = bigram_counts[context[-1]]  # Bigram
-    if candidates: return sample(candidates, temperature)
-
-    return sample(top_200_unigrams, temperature)  # Unigram fallback
+    # Stage 2 — sample a word within the chosen order
+    topK     = top-5 candidates of order n* by count
+    score_i  = count_i / repetition_penalty(word_i)
+    return  w* ~ τ(score ; T)
 ```
 
-There are **three prediction modes** that differ in how they pick from candidates:
+`GAMMA` (default 1.3) controls how strongly higher orders are preferred; `KAPPA` (default 3)
+suppresses high-order contexts seen only once or twice (prevents verbatim memorised output).
+Both stages share the temperature `T`: low `T` ≈ the old "always highest order + argmax"
+behaviour, high `T` flattens both the order distribution and the word distribution. A
+repetition penalty plus a bigram anti-loop guard keep generation coherent.
+
+Ghost text uses a **separate, deterministic** path (it is a stable UI guidance feature):
 
 | Method | Selection Strategy | Used By |
 |--------|--------------------|---------|
-| `_predict_next_with_backoff()` | Weighted random sampling (temperature-scaled) | Sentence/paragraph generation |
-| `_predict_most_likely_next()` | Deterministic argmax (always picks most frequent) | Ghost text at T=1.0 |
+| `_sample_token()` | Hierarchical level + top-K sampling (temperature-scaled) | Sentence/paragraph generation |
+| `_predict_most_likely_next()` | Deterministic argmax (always picks most frequent) | Ghost text (all temperatures) |
 | `_predict_ghost_token()` | Deterministic argmax with repetition blocking via `seen` set | Ghost text anti-loop chain |
 
 ### Ghost Text (Inline Autocomplete)
 
-**Method:** `get_ghost_text(text, max_ghost_words=7, temperature=1.0)`
+**Method:** `get_ghost_text(text, max_ghost_words=7)`
 
 Ghost text is the gray inline suggestion that appears as the user types. It operates in
 three steps:
@@ -149,18 +153,15 @@ If the cursor is mid-word (e.g. `"ca"`), find the most frequent word starting wi
 prefix (`"cat"`) and make it the first ghost token. The context is updated so Step 2
 predicts after `"cat"`, not `"ca"`.
 
-**Step 2 — Chain generation (up to 7 tokens):**
+**Step 2 — Chain generation (up to 7 tokens), deterministic & temperature-free:**
 
-- **At T=1.0 (deterministic path):** Uses `_predict_most_likely_next()` with a bigram-based
-  anti-loop guard. Before generating, all bigrams from the user's typed text are recorded.
-  If the predicted next token would form a bigram already seen, the model falls back to
-  `_predict_ghost_token()` which skips that token. This prevents ghost loops like
-  `"the first time in his career, the first time in his career..."`.
-
-- **At T>1.0 (stochastic path):** Uses `_predict_next_with_backoff()` with temperature
-  sampling. The `min_cands` fix ensures the model falls back from memorized single-candidate
-  high-order matches to a level where multiple next words exist, giving temperature
-  something to work with.
+Ghost is intentionally deterministic so the same editor state always yields the same
+suggestion (stable, repeatable, demo-safe). It uses `_predict_most_likely_next()` with a
+bigram-based anti-loop guard: before generating, all bigrams from the user's typed text are
+recorded; if the predicted next token would form a bigram already seen, the model falls back
+to `_predict_ghost_token()` which skips that token. This prevents ghost loops like
+`"the first time in his career, the first time in his career..."`. Temperature affects only
+sentence/paragraph **generation** (`_sample_token`), never the ghost suggestion.
 
 **Step 3 — Assemble:**
 Ghost tokens are converted to display text via `_tokens_to_text()`, which attaches
