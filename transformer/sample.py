@@ -13,6 +13,7 @@ Pure BPE mode: sentence-end detection is done on the decoded string
 """
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -28,6 +29,11 @@ from text_utils import (
     text_ends_sentence,
 )
 from transformer.model import GPT, GPTConfig
+
+_CLAUSE_BOUNDARY = re.compile(
+    r'\b(?:but|however|so|because|although|while|since|if|when|where|'
+    r'which|that|who|then|or|and|yet|nor|for|whether|unless|though)\b'
+)
 
 
 @dataclass
@@ -172,6 +178,37 @@ class TransformerEngine:
         return new_ids
 
     # ------------------------------------------------------------------ #
+    #  Post-processing                                                    #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _trim_to_sentence(text: str) -> str:
+        """Trim raw decoded text to the last natural clause boundary and
+        append a period so the output reads as a complete sentence.
+        If the text already ends with sentence punctuation, return as-is."""
+        text = text.strip()
+        if not text:
+            return text
+        if text[-1] in SENTENCE_END_CHARS:
+            return text
+
+        best = -1
+        for m in _CLAUSE_BOUNDARY.finditer(text):
+            if m.start() > 15:
+                best = m.start()
+
+        if best > 15:
+            trimmed = text[:best].rstrip(" ,;:-")
+        else:
+            last_space = text.rfind(" ", 15)
+            trimmed = text[:last_space] if last_space > 15 else text
+
+        trimmed = trimmed.rstrip(" ,;:-")
+        if trimmed and trimmed[-1] not in SENTENCE_END_CHARS:
+            trimmed += "."
+        return trimmed
+
+    # ------------------------------------------------------------------ #
     #  Public generation API                                              #
     # ------------------------------------------------------------------ #
 
@@ -181,25 +218,37 @@ class TransformerEngine:
         return decode(ids)
 
     def generate_until_sentence_end(self, prompt: str,
-                                    max_new_tokens: int = 100, **kwargs) -> str:
+                                    max_new_tokens: int = 60, **kwargs) -> str:
         sc = SamplingConfig(max_new_tokens=max_new_tokens, **kwargs)
         ids = self._generate_loop(
             self._encode_prompt(prompt), sc, stop_on_sentence=True
         )
-        return decode(ids)
+        raw = decode(ids)
+        return self._trim_to_sentence(raw)
 
     def generate_paragraph(self, prompt: str, max_sentences: int = 5,
                             max_new_tokens: int = 300, **kwargs) -> str:
-        sc = SamplingConfig(
-            max_new_tokens=max_new_tokens,
-            temperature=kwargs.pop("temperature", 0.75),
-            top_p=kwargs.pop("top_p", 0.90),
-            **kwargs,
-        )
-        ids = self._generate_loop(
-            self._encode_prompt(prompt), sc,
-            stop_on_sentence=True,
-            stop_on_paragraph=True,
-            max_sentences=max_sentences,
-        )
-        return decode(ids)
+        temp = kwargs.pop("temperature", 0.75)
+        top_p_val = kwargs.pop("top_p", 0.90)
+
+        sentences = []
+        context = prompt
+        for _ in range(max_sentences):
+            sc = SamplingConfig(
+                max_new_tokens=60,
+                temperature=temp,
+                top_p=top_p_val,
+                **kwargs,
+            )
+            ids = self._generate_loop(
+                self._encode_prompt(context), sc,
+                stop_on_sentence=True,
+            )
+            raw = decode(ids)
+            sent = self._trim_to_sentence(raw)
+            if not sent.strip():
+                break
+            sentences.append(sent)
+            context = context + " " + sent
+
+        return " ".join(sentences)

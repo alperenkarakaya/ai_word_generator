@@ -17,10 +17,14 @@ const sevengramCtxLabel= document.getElementById('sevengram-ctx-label');
 const engineSelect     = document.getElementById('engine-select');
 const temperatureSlider= document.getElementById('temperature-slider');
 const temperatureValue = document.getElementById('temperature-value');
+const engineNotice     = document.getElementById('engine-notice');
+const editorStatus     = document.getElementById('editor-status');
 
 // ── State ────────────────────────────────────────────────────────────────────
 let debounceTimer  = null;
-let currentGhost   = '';   // full ghost-layer text (user text + gray suggestion)
+let currentGhost   = '';
+let ghostSeq       = 0;     // monotonic counter — ignore stale ghost responses
+let generating     = false; // true while Shift+Tab / Ctrl+Shift+Tab is in-flight
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function getEngine() {
@@ -37,15 +41,13 @@ function escapeHtml(str) {
     return d.innerHTML;
 }
 
-/**
- * Renders the ghost overlay.
- * userText  — what the user actually typed
- * ghostFull — userText + gray suggestion (returned by /predict_next)
- *
- * The ghost div sits behind the textarea.  We make the "typed" portion
- * transparent and only the suggestion portion gray — so the user sees their
- * own black text cleanly, with the gray suggestion appearing after it.
- */
+function showStatus(msg) {
+    if (editorStatus) {
+        editorStatus.textContent = msg;
+        editorStatus.style.display = msg ? 'block' : 'none';
+    }
+}
+
 function renderGhost(userText, ghostFull) {
     if (!ghostFull || ghostFull.length <= userText.length) {
         ghostField.innerHTML = '';
@@ -60,6 +62,17 @@ function renderGhost(userText, ghostFull) {
         `<span class="ghost-suggestion">${escapeHtml(suggestion)}</span>`;
 }
 
+function updateEngineNotice() {
+    if (!engineNotice) return;
+    if (getEngine() === 'transformer') {
+        engineNotice.style.display = 'block';
+        ghostField.innerHTML = '';
+        currentGhost = '';
+    } else {
+        engineNotice.style.display = 'none';
+    }
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
     fetch('/probabilities?text=')
@@ -72,6 +85,14 @@ window.addEventListener('DOMContentLoaded', () => {
             temperatureValue.textContent = parseFloat(temperatureSlider.value).toFixed(1);
         });
     }
+
+    if (engineSelect) {
+        engineSelect.addEventListener('change', () => {
+            updateEngineNotice();
+            inputField.dispatchEvent(new Event('input'));
+        });
+    }
+    updateEngineNotice();
 });
 
 // ── Listeners ────────────────────────────────────────────────────────────────
@@ -88,22 +109,22 @@ function syncScroll() {
 function handleInput() {
     const text = this.value;
 
-    // Clear ghost immediately when user types so stale suggestion disappears
     ghostField.innerHTML = '';
     currentGhost = '';
 
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
-        // Ghost text — only for N-gram engine
         if (getEngine() === 'ngram') {
+            const seq = ++ghostSeq;
             try {
                 const r = await fetch(`/predict_next?temperature=${getTemperature()}&text=` + encodeURIComponent(text));
                 const d = await r.json();
-                renderGhost(text, d.ghost || '');
+                if (seq === ghostSeq) {
+                    renderGhost(text, d.ghost || '');
+                }
             } catch (_) {}
         }
 
-        // Probability panels
         try {
             const r = await fetch('/probabilities?text=' + encodeURIComponent(text));
             renderProbabilities(await r.json());
@@ -116,10 +137,12 @@ function handleKeydown(e) {
     const text   = inputField.value;
     const engine = getEngine();
 
-    // ── Ctrl + Shift + Tab → paragraph (must be checked before Shift+Tab) ──
+    // ── Ctrl + Shift + Tab → paragraph ──
     if (e.key === 'Tab' && e.shiftKey && e.ctrlKey) {
         e.preventDefault();
-        if (!text.length) return;
+        if (!text.length || generating) return;
+        generating = true;
+        showStatus('Generating paragraph...');
         fetch(`/predict_paragraph?engine=${engine}&temperature=${getTemperature()}&text=` + encodeURIComponent(text))
             .then(r => r.json())
             .then(data => {
@@ -129,14 +152,17 @@ function handleKeydown(e) {
                     inputField.dispatchEvent(new Event('input'));
                 }
             })
-            .catch(err => console.error('predict_paragraph failed:', err));
+            .catch(err => console.error('predict_paragraph failed:', err))
+            .finally(() => { generating = false; showStatus(''); });
         return;
     }
 
-    // ── Shift + Tab → full sentence completion ──────────────────────────────
+    // ── Shift + Tab → sentence ──
     if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey) {
         e.preventDefault();
-        if (!text.length) return;
+        if (!text.length || generating) return;
+        generating = true;
+        showStatus('Generating sentence...');
         fetch(`/predict_sentence?engine=${engine}&temperature=${getTemperature()}&text=` + encodeURIComponent(text))
             .then(r => r.json())
             .then(data => {
@@ -146,19 +172,16 @@ function handleKeydown(e) {
                     inputField.dispatchEvent(new Event('input'));
                 }
             })
-            .catch(err => console.error('predict_sentence failed:', err));
+            .catch(err => console.error('predict_sentence failed:', err))
+            .finally(() => { generating = false; showStatus(''); });
         return;
     }
 
-    // ── Tab alone → accept one word at a time from the 7-word ghost ──────────
+    // ── Tab → accept one ghost word ──
     if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey) {
         e.preventDefault();
         if (!currentGhost || currentGhost === text) return;
 
-        // The suggestion is everything in currentGhost beyond what the user typed.
-        // It may start with a space  (" sat on…")  — next-word case
-        //                   a letter ("t sat on…") — partial-word-completion case
-        //                   a punct  (".")          — only punctuation left
         const suggestionPart = currentGhost.slice(text.length);
         const trimmed        = suggestionPart.trimStart();
         const leadingChars   = suggestionPart.length - trimmed.length;
@@ -166,10 +189,8 @@ function handleKeydown(e) {
 
         let newValue;
         if (spaceInTrimmed === -1) {
-            // Only one token left (word or punctuation) — accept everything.
             newValue = currentGhost;
         } else {
-            // Accept up to (not including) the first inter-word space.
             newValue = text + suggestionPart.slice(0, leadingChars + spaceInTrimmed);
         }
 
@@ -177,12 +198,11 @@ function handleKeydown(e) {
         inputField.setSelectionRange(newValue.length, newValue.length);
         ghostField.innerHTML = '';
         currentGhost = '';
-        // Re-fetch: gets a fresh 7-word ghost starting from the new position.
         inputField.dispatchEvent(new Event('input'));
         return;
     }
 
-    // ── Escape → clear ghost ────────────────────────────────────────────────
+    // ── Escape → clear ghost ──
     if (e.key === 'Escape') {
         ghostField.innerHTML = '';
         currentGhost = '';

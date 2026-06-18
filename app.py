@@ -15,6 +15,22 @@ Query param ?engine=ngram (default) | transformer
 import os
 from flask import Flask, render_template, request, jsonify
 
+
+def safe_int(value, default, lo=1, hi=500):
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
+
+def safe_float(value, default, lo=0.1, hi=5.0):
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(lo, min(hi, v))
+
 # ── paths from environment (override for deployment) ─────────────────────────
 TRANSFORMER_CKPT = os.environ.get("TRANSFORMER_CKPT", "checkpoints/transformer.pt")
 TOKENIZER_PATH   = os.environ.get("TOKENIZER_PATH",   "tokenizer/spm.model")
@@ -82,8 +98,8 @@ def predict_sentence():
     """
     engine      = request.args.get("engine", "ngram")
     text        = request.args.get("text", "")
-    max_tokens  = int(request.args.get("max_tokens", 100))
-    temperature = float(request.args.get("temperature", 1.0))
+    max_tokens  = safe_int(request.args.get("max_tokens"), 100, lo=1, hi=500)
+    temperature = safe_float(request.args.get("temperature"), 1.0, lo=0.1, hi=5.0)
 
     if engine == "transformer":
         if transformer is None:
@@ -92,7 +108,9 @@ def predict_sentence():
                 "hint":  "Train the model on Colab and place checkpoints/transformer.pt here.",
             }), 503
         try:
-            completion = transformer.generate_until_sentence_end(text, max_new_tokens=max_tokens)
+            completion = transformer.generate_until_sentence_end(
+                text, max_new_tokens=max_tokens, temperature=temperature,
+            )
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
         return jsonify({"completion": completion})
@@ -123,14 +141,16 @@ def predict_paragraph():
     """
     engine        = request.args.get("engine", "ngram")
     text          = request.args.get("text", "")
-    max_sentences = int(request.args.get("max_sentences", 5))
-    temperature   = float(request.args.get("temperature", 1.0))
+    max_sentences = safe_int(request.args.get("max_sentences"), 5, lo=1, hi=20)
+    temperature   = safe_float(request.args.get("temperature"), 1.0, lo=0.1, hi=5.0)
 
     if engine == "transformer":
         if transformer is None:
             return jsonify({"error": transformer_error}), 503
         try:
-            paragraph = transformer.generate_paragraph(text, max_sentences=max_sentences)
+            paragraph = transformer.generate_paragraph(
+                text, max_sentences=max_sentences, temperature=temperature,
+            )
         except Exception as exc:
             return jsonify({"error": str(exc)}), 500
         return jsonify({"completion": paragraph})
@@ -161,7 +181,7 @@ def predict_next():
     if ngram is None:
         return jsonify({"ghost": ""})
     text        = request.args.get("text", "")
-    temperature = float(request.args.get("temperature", 1.0))
+    temperature = safe_float(request.args.get("temperature"), 1.0, lo=0.1, hi=5.0)
     ghost = ngram.get_ghost_text(text, temperature=temperature)
     return jsonify({"ghost": ghost})
 

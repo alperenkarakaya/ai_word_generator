@@ -104,11 +104,11 @@ PARAGRAPH_BREAK_TOKENS = ("TR017",)
 
 
 def replace_punctuation_with_tokens(text: str) -> str:
-    text = text.replace("...", "TR016 ")
+    text = text.replace("...", " TR016 ")
     for punct, token in sorted(PUNCTUATION_TOKENS.items(), key=lambda x: -len(x[0])):
         if punct == "...":
             continue
-        text = text.replace(punct, f"{token} ")
+        text = text.replace(punct, f" {token} ")
     return text
 
 
