@@ -58,14 +58,6 @@ class NgramPredictor:
         text = re.sub(r"\s+", " ", text).strip()
         return text.split() if text else []
 
-    def _sample_with_temperature(self, cands: dict, temperature: float) -> str:
-        """Weighted random sample with temperature scaling.
-        T > 1 flattens the distribution (more diverse), T < 1 sharpens it."""
-        if temperature == 1.0:
-            return random.choices(list(cands), weights=list(cands.values()), k=1)[0]
-        weights = [v ** (1.0 / temperature) for v in cands.values()]
-        return random.choices(list(cands), weights=weights, k=1)[0]
-
     # ── hierarchical sampler (generation only — NOT ghost) ──────────────────────
 
     @staticmethod
@@ -126,16 +118,24 @@ class NgramPredictor:
             scores[n] = (n ** GAMMA) * conf
         return scores
 
-    def _sample_token(self, context: list, temperature: float = 1.0, recent=None):
+    def _sample_token(self, context: list, temperature: float = 1.0, recent=None,
+                      rng=None):
         """
-        Hierarchical probabilistic next-token sampler used by sentence and
-        paragraph generation (NOT by ghost autocomplete, which stays deterministic).
+        Hierarchical probabilistic next-token sampler used by sentence,
+        paragraph, and ghost-text generation.
 
         Stage 1 — sample which n-gram order to use from the tempered level
                   distribution τ(score_n ; T).
         Stage 2 — within that order, keep the top-K candidates by count, apply a
                   repetition penalty, and sample from τ(count_i ; T).
+
+        `rng` defaults to the shared `random` module (fresh randomness every
+        call — used by sentence/paragraph generation). Ghost text passes a
+        seeded `random.Random` instance instead so the suggestion is
+        reproducible for a given (text, temperature) pair and doesn't flicker
+        to a different random draw on every keystroke.
         """
+        rng = rng or random
         recent = recent or ()
         level_scores = self._level_scores(context)
         if not level_scores:
@@ -143,7 +143,7 @@ class NgramPredictor:
 
         # Stage 1 — choose an order.
         level_probs = self._tempered(level_scores, temperature)
-        chosen_n = random.choices(
+        chosen_n = rng.choices(
             list(level_probs), weights=list(level_probs.values()), k=1
         )[0]
 
@@ -154,86 +154,53 @@ class NgramPredictor:
             penalty = REP_PENALTY if w in recent else 1.0
             word_scores[w] = c / penalty
         word_probs = self._tempered(word_scores, temperature)
-        return random.choices(
+        return rng.choices(
             list(word_probs), weights=list(word_probs.values()), k=1
         )[0]
 
-    def _predict_most_likely_next(self, context: list):
+    def _selection_distribution(self, context: list, temperature: float = 1.0, top_n: int = 8):
         """
-        Stupid Backoff (deterministic): same order of fallback but always picks
-        the single most-frequent candidate.  Used for ghost text so the suggestion
-        is stable while the user types.
+        The TRUE next-word distribution the hierarchical sampler draws from:
+
+            P(w) = Σ_n  P(level=n) · P_tempered(w | top-K of order n)
+
+        This composes Stage-1 (which order) with Stage-2 (which word), both at
+        the given temperature — i.e. exactly what `_sample_token` samples from,
+        minus the runtime repetition penalty (which depends on generation
+        history and so has no meaning while the user is merely typing).
+
+        Reuses `_level_scores`, `_tempered` and `TOPK` so the panel and the
+        generator can never drift apart. Returns a list of
+        {word, probability(%), sources:[{level, pct}]} sorted by probability.
         """
-        for n in range(self.max_n, 3, -1):
-            if n not in self.ngram_counts:
+        level_scores = self._level_scores(context)
+        if not level_scores:
+            return []
+        level_probs = self._tempered(level_scores, temperature)   # Stage 1
+
+        combined      = defaultdict(float)          # word -> total prob mass
+        contributions = defaultdict(dict)           # word -> {order: prob mass}
+        for n, p_level in level_probs.items():
+            cands = self._cands_at_level(context, n)
+            if not cands:
                 continue
-            if len(context) < n - 1:
-                continue
-            key   = tuple(context[-(n - 1):])
-            cands = self.ngram_counts[n].get(key)
-            if cands:
-                return max(cands, key=cands.get)
+            word_scores = {w: c for w, c in cands.most_common(TOPK)}
+            word_probs  = self._tempered(word_scores, temperature)   # Stage 2
+            for w, pw in word_probs.items():
+                mass = p_level * pw
+                combined[w]         += mass
+                contributions[w][n]  = contributions[w].get(n, 0.0) + mass
 
-        if len(context) >= 2:
-            key   = (context[-2], context[-1])
-            cands = self.trigram_counts.get(key)
-            if cands:
-                return max(cands, key=cands.get)
-
-        if context:
-            cands = self.bigram_counts.get(context[-1])
-            if cands:
-                return max(cands, key=cands.get)
-
-        if self.unigram_counts:
-            return self.unigram_counts.most_common(1)[0][0]
-
-        return None
-
-    def _predict_ghost_token(self, context: list, seen: set):
-        """
-        Deterministic Stupid Backoff for the ghost chain with a soft repetition
-        block: any token already in `seen` is skipped unless it is the only
-        candidate at every level (prevents argmax loops like "the first time in
-        his career, the first time in his career, ...").
-
-        Punctuation tokens are never added to `seen` by the caller so they can
-        legitimately recur.
-        """
-        def best_candidate(cands: dict):
-            filtered = {k: v for k, v in cands.items() if k not in seen}
-            pool = filtered if filtered else cands
-            return max(pool, key=pool.get)
-
-        for n in range(self.max_n, 3, -1):
-            if n not in self.ngram_counts:
-                continue
-            if len(context) < n - 1:
-                continue
-            key   = tuple(context[-(n - 1):])
-            cands = self.ngram_counts[n].get(key)
-            if cands:
-                return best_candidate(cands)
-
-        if len(context) >= 2:
-            key   = (context[-2], context[-1])
-            cands = self.trigram_counts.get(key)
-            if cands:
-                return best_candidate(cands)
-
-        if context:
-            cands = self.bigram_counts.get(context[-1])
-            if cands:
-                return best_candidate(cands)
-
-        if self.unigram_counts:
-            top      = dict(self.unigram_counts.most_common(200))
-            filtered = {k: v for k, v in top.items() if k not in seen}
-            pool     = filtered if filtered else top
-            if pool:
-                return max(pool, key=pool.get)
-
-        return None
+        ranked = sorted(combined.items(), key=lambda kv: kv[1], reverse=True)[:top_n]
+        out = []
+        for w, p in ranked:
+            srcs = sorted(contributions[w].items(), key=lambda kv: kv[1], reverse=True)
+            out.append({
+                "word": restore_punctuation_from_tokens(w) if is_punctuation_token(w) else w,
+                "probability": round(p * 100, 1),
+                "sources": [{"level": n, "pct": round(m / p * 100)} for n, m in srcs] if p > 0 else [],
+            })
+        return out
 
     @staticmethod
     def _tokens_to_text(tokens: list) -> str:
@@ -395,6 +362,17 @@ class NgramPredictor:
             if nw is None:
                 break
 
+            # A sentence can't consist of just a lone punctuation mark — resample
+            # a few times before giving up on this sentence entirely.
+            resample_attempts = 0
+            while not generated and is_sentence_ending(nw) and resample_attempts < 5:
+                nw = self._sample_token(context, temperature, recent)
+                if nw is None:
+                    break
+                resample_attempts += 1
+            if nw is None or (not generated and is_sentence_ending(nw)):
+                break
+
             # Anti-loop: if this (prev, nw) bigram was already emitted, resample a
             # few times before giving up.  Soft and bounded so it can't spin.
             prev = context[-1] if context else None
@@ -439,14 +417,14 @@ class NgramPredictor:
 
     # ── ghost text (inline word suggestion) ───────────────────────────────────
 
-    def get_ghost_text(self, text: str, max_ghost_words: int = 7) -> str:
+    def get_ghost_text(self, text: str, max_ghost_words: int = 7,
+                       temperature: float = 1.0) -> str:
         """
         Returns the full ghost-layer string showing up to max_ghost_words words ahead.
 
-        Ghost autocomplete is intentionally DETERMINISTIC and temperature-free:
-        it is a UI guidance feature, so the same editor state must always yield
-        the same suggestion (stable, repeatable, demo-safe).  Creative variety
-        lives in sentence/paragraph *generation*, which uses _sample_token.
+        Uses the same hierarchical sampler as sentence/paragraph generation
+        (_sample_token), so the inline suggestion reacts to `temperature` just
+        like the rest of the UI.
 
         Algorithm
         ---------
@@ -454,12 +432,13 @@ class NgramPredictor:
             If the cursor is inside an incomplete word (e.g. "ca"), find the
             most-frequent word that starts with that prefix ("cat") and make it
             the first ghost token.  The running context is updated so that step 2
-            predicts *after* "cat", not after the raw prefix "ca".
+            predicts *after* "cat", not after the raw prefix "ca".  This step
+            stays deterministic — it's literal word completion, not prediction.
 
-        Step 2 — deterministic chain generation:
-            Call _predict_most_likely_next(context) up to max_ghost_words times,
-            with an anti-loop guard so the ghost doesn't repeat the user's typed
-            bigrams.  Each new token is appended to `context` so word n+1 is
+        Step 2 — tempered chain generation:
+            Call _sample_token(context, temperature, recent) up to max_ghost_words
+            times, with an anti-loop guard so the ghost doesn't repeat the user's
+            typed bigrams.  Each new token is appended to `context` so word n+1 is
             conditioned on words 1..n (not just the original user text).  Stop
             early when a sentence-ending token (TR001 / TR003 / TR004) is produced
             — the period is *included* so the user sees where the sentence ends.
@@ -494,28 +473,44 @@ class NgramPredictor:
             ghost_tokens.append(best)
             context[-1] = best      # "ca" → "cat" so step-2 context is correct
 
-        # ── Step 2: deterministic chain generation ───────────────────────────
-        # Stable argmax suggestion with an anti-loop guard so the ghost doesn't
-        # repeat the user's typed bigrams.  No temperature, no sampling.
+        # ── Step 2: tempered chain generation ────────────────────────────────
+        # Same hierarchical sampler as sentence/paragraph generation, so the
+        # ghost suggestion actually reacts to `temperature`. Anti-loop guard
+        # still applies so the ghost doesn't repeat the user's typed bigrams.
+        #
+        # Seeded RNG (keyed on text+temperature) instead of the shared `random`
+        # module: the same editor state must keep showing the same suggestion
+        # while the user reads it, or Tab can accept a different draw than
+        # what was on screen. Changing the temperature slider *does* reroll it,
+        # since that changes the seed.
+        rng = random.Random((text, round(temperature, 2)))
         remaining = max_ghost_words - len(ghost_tokens)
 
         seen_bigrams: set = set()
         for i in range(len(tokens) - 1):
             seen_bigrams.add((tokens[i], tokens[i + 1]))
 
+        recent: deque = deque(maxlen=REP_WINDOW)
+
         for _ in range(remaining):
-            tok = self._predict_most_likely_next(context)
+            tok = self._sample_token(context, temperature, recent, rng=rng)
             if tok is None:
                 break
 
             prev = context[-1] if context else None
-            if prev is not None and (prev, tok) in seen_bigrams:
-                tok = self._predict_ghost_token(context, {tok})
-                if tok is None or (prev, tok) in seen_bigrams:
+            attempts = 0
+            while prev is not None and (prev, tok) in seen_bigrams and attempts < 3:
+                tok = self._sample_token(context, temperature, recent, rng=rng)
+                if tok is None:
                     break
+                attempts += 1
+            if tok is None or (prev is not None and (prev, tok) in seen_bigrams):
+                break
 
             ghost_tokens.append(tok)
             context.append(tok)
+            if not is_punctuation_token(tok):
+                recent.append(tok)
             if len(context) >= 2:
                 seen_bigrams.add((context[-2], context[-1]))
             if is_sentence_ending(tok):
@@ -567,7 +562,7 @@ class NgramPredictor:
         if not tokens:
             return {
                 "unigram": unigram_probs, "bigram": [], "trigram": [],
-                "current_word": "", "context": "", "levels": [],
+                "current_word": "", "context": "", "levels": [], "selection": [],
             }
 
         last = tokens[-1]
@@ -646,6 +641,9 @@ class NgramPredictor:
                     "count":       sum(cands.values()) if cands else 0,
                 })
 
+        # ── Stage-1 × Stage-2 combined: the true next-word selection dist. ────
+        selection = self._selection_distribution(tokens, temperature)
+
         return {
             "unigram":      unigram_probs,
             "bigram":       bigram_probs,
@@ -653,5 +651,6 @@ class NgramPredictor:
             "current_word": display_last,
             "context":      ctx_display,
             "levels":       levels,
+            "selection":    selection,
             **higher,
         }

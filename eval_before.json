@@ -1,0 +1,93 @@
+{
+  "perplexity": {
+    "ngram": {
+      "perplexity": 58.72,
+      "log_prob_sum": -42303.88,
+      "num_positions": 10387,
+      "oov_count": 1192,
+      "oov_rate": 0.1148,
+      "backoff_distribution": {
+        "1": 0.1143,
+        "2": 0.1093,
+        "3": 0.0959,
+        "4": 0.0852,
+        "5": 0.077,
+        "6": 0.0691,
+        "7": 0.4492
+      }
+    },
+    "transformer": {
+      "perplexity": 335.77,
+      "mean_cross_entropy": 5.8164,
+      "num_tokens": 10969
+    },
+    "ngram_bpc": 1.2206,
+    "transformer_bpc": 1.8409
+  },
+  "topk_accuracy": {
+    "ngram": {
+      "num_positions": 10387,
+      "top1": 0.5882,
+      "top3": 0.6477,
+      "top5": 0.6744
+    },
+    "transformer": {
+      "num_tokens": 10969,
+      "top1": 0.2271,
+      "top3": 0.3557,
+      "top5": 0.4164
+    }
+  },
+  "latency": {
+    "ngram": {
+      "mean_ms": 37.99,
+      "median_ms": 36.88,
+      "p95_ms": 53.91,
+      "std_ms": 7.81,
+      "tokens_per_second": 1315.2,
+      "num_prompts": 10,
+      "repeats_per_prompt": 5
+    },
+    "transformer": {
+      "mean_ms": 508.33,
+      "median_ms": 481.23,
+      "p95_ms": 659.34,
+      "std_ms": 73.25,
+      "tokens_per_second": 82.4,
+      "num_prompts": 10,
+      "repeats_per_prompt": 5
+    }
+  },
+  "memory": {},
+  "metadata": {
+    "timestamp": "2026-06-18T23:55:58",
+    "test_data": {
+      "source": "story.txt",
+      "train_cutoff_chars": 10000000,
+      "test_chars_used": 50000,
+      "ngram_test_tokens": 10388,
+      "transformer_test_tokens": 10970
+    },
+    "ngram_config": {
+      "max_n": 7,
+      "vocab_size": 25673,
+      "total_training_words": 1886390,
+      "model_file": "saved_model.pkl",
+      "model_size_mb": 247.5
+    },
+    "transformer_config": {
+      "vocab_size": 8000,
+      "block_size": 256,
+      "n_layer": 6,
+      "n_head": 6,
+      "d_model": 384,
+      "d_ff": 1536,
+      "dropout": 0.1,
+      "num_parameters": 13808640,
+      "model_file": "checkpoints/transformer.pt",
+      "model_size_mb": 158.1,
+      "device": "cpu"
+    }
+  },
+  "markdown_tables": "### Table 1 — Model Overview\n\n| Property | N-gram (7-gram) | Transformer (GPT) |\n|---|---|---|\n| Architecture | Stupid Backoff 7->1 | 6-layer decoder-only |\n| Vocabulary | 25,673 (whitespace) | 8,000 (BPE) |\n| Parameters | N/A (count tables) | 13.8M |\n| Training tokens | 1,886,390 | trained on Colab |\n| Disk size | 247.5 MB | 158.1 MB |\n\n### Table 2 — Language Modeling Quality\n\n| Metric | N-gram | Transformer |\n|---|---|---|\n| Perplexity | 58.72 | 335.77 |\n| Bits-per-character | 1.2206 | 1.8409 |\n| Top-1 Accuracy | 58.82% | 22.71% |\n| Top-3 Accuracy | 64.77% | 35.57% |\n| Top-5 Accuracy | 67.44% | 41.64% |\n| OOV Rate | 11.48% | N/A (BPE) |\n| Eval tokens | 10,387 | 10,969 |\n\n### Table 3 — Generation Performance\n\n| Metric | N-gram | Transformer |\n|---|---|---|\n| Mean latency (ms) | 38.0 | 508.3 |\n| Median latency (ms) | 36.9 | 481.2 |\n| P95 latency (ms) | 53.9 | 659.3 |\n| Tokens/second | 1,315.2 | 82.4 |\n\n### Table 4 — Resource Usage\n\n| Metric | N-gram | Transformer |\n|---|---|---|\n| Model load peak RAM (MB) | N/A | N/A |\n| Inference peak RAM (MB) | N/A | N/A |\n| Disk footprint (MB) | N/A | N/A |\n| Parameter memory (MB) | N/A | N/A |\n\n### Table 5 — N-gram Backoff Level Distribution\n\n| Backoff Level | Frequency |\n|---|---|\n| 7-gram | 44.9% (4,666) |\n| 6-gram | 6.9% (718) |\n| 5-gram | 7.7% (800) |\n| 4-gram | 8.5% (885) |\n| Trigram | 9.6% (996) |\n| Bigram | 10.9% (1,135) |\n| Unigram | 11.4% (1,187) |\n"
+}

@@ -1,0 +1,612 @@
+========================================================
+T.C.
+İSTANBUL ÜNİVERSİTESİ-CERRAHPAŞA
+MÜHENDİSLİK FAKÜLTESİ
+ELEKTRİK ELEKTRONİK MÜHENDİSLİĞİ
+
+BİTİRME PROJESİ
+
+DEVELOPMENT OF AN AI-ASSISTED TEXT COMPLETION SYSTEM
+WITH N-GRAM AND TRANSFORMER HYBRID ARCHITECTURE
+
+ALPEREN KARAKAYA - 1316210074
+
+DANIŞMAN
+Doç. Dr. ERKAN ATMACA
+
+Haziran, 2026
+
+İSTANBUL
+========================================================
+
+
+ÖNSÖZ
+
+Bu çalışma, Bitirme Projesi I'deki sistemin devamıdır. Geçen dönem N-gram ve
+karakter tabanlı LSTM ağını birlikte kullanan bir metin tamamlama sistemi
+geliştirilmişti. Bu dönem ise o sistem üzerinde değişikliklere gidildi.
+
+LSTM kaldırıldı. Bunun yerine Transformer tabanlı bir model eklendi. N-gram kısmı
+da genişletildi; artık son iki veya üç kelimeye değil, yedi kelimeye kadar bakabiliyor.
+Bir de her iki modeli somut olarak karşılaştırmak için ayrı bir değerlendirme betiği
+yazıldı.
+
+Bu süreçte en çok zaman, modeli çalıştırmaktan çok onun ne yaptığını anlamaya
+harcandı. Danışman hocam Doç. Dr. Erkan Atmaca'ya proje boyunca gösterdiği
+ilgi için teşekkür ederim.
+
+Haziran 2026                                               ALPEREN KARAKAYA
+
+
+========================================================
+
+İÇİNDEKİLER
+
+                                                             Sayfa No
+
+ÖNSÖZ ..............................................   i
+İÇİNDEKİLER .......................................  ii
+1.  GİRİŞ .........................................   1
+2.  GENEL KISIMLAR ................................   3
+3.  MATERYAL VE YÖNTEM ...........................   8
+4.  BULGULAR ......................................  13
+5.  TARTIŞMA VE SONUÇ ............................  17
+KAYNAKLAR .........................................  19
+EKLER .............................................  20
+
+========================================================
+
+
+1. GİRİŞ
+
+Birinci bölümde geliştirilen sistem, N-gram ve karakter tabanlı LSTM modellerini
+birlikte kullanan bir yapıydı. Kullanıcı web arayüzünde bir şeyler yazmaya
+başladığında sistem ya bir sonraki kelimeyi öneriyordu ya da cümlenin geri kalanını
+otomatik tamamlıyordu. Sistem çalışıyordu. Ama bazı sorunlar dikkat çekmeye
+başladı.
+
+Birincisi N-gram tarafındaydı. Model sadece son iki ya da üç kelimeye bakabiliyordu.
+Bu dar bir pencere. "The president of the United States announced" gibi uzun bir
+ifadede trigram, yalnızca son iki kelimeyi bağlam olarak alıyor. Önceki kelimeler
+hiç kullanılmıyor.
+
+İkincisi LSTM modelindeydi. Metin üretirken her karakter için ayrı ayrı model
+çalıştırılıyordu ve bu yavaşlığa neden oluyordu. Bir de zaman zaman gerçek
+kelimeye benzemeyen çıktılar üretiliyordu; modelin yeterince eğitilmesi gerekiyordu
+ama bu tam anlamıyla yapılamamıştı.
+
+Bu projede iki temel değişiklik yapıldı.
+
+Birincisi, N-gram modeli 7-gram'a genişletildi. Sistem artık tahmin yaparken son
+altı kelimeyi görebiliyor. 7-gram seviyesinde eşleşme bulunamazsa sistem 6-gram'a,
+oradan 5-gram'a bakıyor; bu işlem 1-gram'a kadar devam ediyor. Buna Stupid
+Backoff deniyor.
+
+İkincisi, karakter tabanlı LSTM kaldırılarak kelime düzeyinde çalışan bir Transformer
+modeli eklendi. Bu model Google Colab'da eğitildi.
+
+Bunlara ek olarak sisteme şunlar eklendi:
+
+- Sıcaklık parametresi (temperature): Kullanıcı bu değeri değiştirerek üretilen
+  metnin ne kadar çeşitli olacağını ayarlıyor.
+- Hayalet metin önerisi: Kullanıcı yazarken gri renkte bir devam önerisi görünüyor.
+  Tab tuşuyla kabul edilebiliyor.
+- Paragraf üretimi: Sistem artık tek cümle değil, birbiriyle bağlantılı birkaç cümle
+  üretebiliyor.
+- Değerlendirme betiği: İki modeli sayısal olarak karşılaştırmak için ayrı bir
+  script yazıldı.
+
+Tezin ilerleyen bölümlerinde kullanılan yöntemler (Bölüm 2), sistemin nasıl
+kurulduğu (Bölüm 3), ölçüm sonuçları (Bölüm 4) ve değerlendirme (Bölüm 5)
+yer almaktadır.
+
+
+========================================================
+
+2. GENEL KISIMLAR
+
+Bu bölümde, projede kullanılan yöntemlerin arka planı anlatılmaktadır. Birinci
+bölümde zaten açıklanan N-gram temelleri, LSTM yapısı ve tokenizasyon tekrar
+ele alınmadı. Sadece yeni eklenen ya da değiştirilen parçalar var.
+
+
+2.1. N-gram ve Backoff Stratejisi
+
+N-gram modelinin temel mantığı, eğitim verisindeki kelime geçişlerini saymaktır.
+Örneğin "good morning" çiftinin kaç kez geçtiğini bilerek, biri "good" yazdığında
+"morning" önerilebiliyor. Bu, birinci bölümde de aynıydı.
+
+Bu projede fark şu: model artık iki ya da üç kelimeye değil, yedi kelimeye kadar
+bakabiliyor. Daha uzun bağlam, genellikle daha iyi tahmin anlamına geliyor. Ancak
+her 7-kelimelik kombinasyon eğitim verisinde yer almayabiliyor. Böyle bir durumda
+sistem 6-gram'a, oradan 5-gram'a geçiyor ve bu işlem 1-gram'a kadar devam ediyor.
+Bu yönteme Stupid Backoff deniyor [1]. Büyük veri setlerinde kullanışlı sonuçlar
+verdiği biliniyor.
+
+
+2.2. Transformer Modeli
+
+Birinci bölümde Transformer'dan kısaca bahsedilmişti ve ilerleyen aşamalarda
+kullanılabileceği söylenmişti. Bu projede LSTM kaldırılarak Transformer kullanılmaya
+başlandı.
+
+Transformer'ın temel farkı şu: LSTM metni kelime kelime sırayla işler, Transformer
+ise bir cümledeki tüm kelimelere aynı anda bakabilir. Bu sayede cümlenin başındaki
+bir kelimeyle sonundaki bir kelime arasındaki bağlantı daha doğrudan kurulabiliyor [2].
+
+Bu projede kullanılan model, metin soldan sağa üretecek şekilde kuruldu. Her yeni
+kelimeyi üretirken daha önce ürettiklerini bağlam olarak kullanıyor. Model Google
+Colab üzerinde eğitildi.
+
+
+2.3. BPE Tokenizasyonu
+
+Birinci bölümdeki LSTM her harfi ayrı bir giriş olarak işliyordu. Transformer
+modelinde ise BPE (Byte-Pair Encoding) kullanılıyor [3].
+
+BPE metni kelime parçalarına böler. Sık birlikte görülen karakter grupları tek birim
+haline gelir; örneğin "ing" veya "the" birer token olabilir. Böylece model hem daha
+verimli öğreniyor hem de daha önce hiç görmediği kelimeleri parçalara ayırarak
+işleyebiliyor.
+
+N-gram modeli için ise TR0xx noktalama tokeni sistemi aynı kaldı. İki model farklı
+yöntemlerle tokenizasyon yaptığından birbirinden bağımsız çalışıyorlar.
+
+
+2.4. Temperature Parametresi
+
+Metin üretiminde her adımda hangi kelimenin seçileceğine karar verilir. Eğer hep
+en yüksek olasılıklı kelime seçilirse üretilen metin tekrarlayan kalıplara girebiliyor.
+
+Temperature bunu etkiliyor. Değer 1'e yakınsa model olasılık dağılımını olduğu
+gibi kullanıyor. Değer arttıkça dağılım yassılaşıyor ve beklenmedik kelimeler de
+seçilebiliyor; bu metni daha çeşitli yapıyor. Değer düşünce ise model her seferinde
+en olası kelimeye yöneliyor [4].
+
+Projede bu değer arayüzden ayarlanabiliyor. Varsayılan olarak 1.0. Hayalet metin
+önerisinde kullanılmıyor çünkü aynı girdi için hep aynı önerinin görünmesi gerekiyor.
+
+
+2.5. N-gram Üretiminde Örnekleme Yöntemi
+
+Birinci bölümdeki N-gram her seferinde en sık görülen seçeneği öneriyordu. Hızlı
+ama kısıtlı bir yaklaşım.
+
+Bu projede farklı bir yöntem denendi. Hangi uzunluktaki bağlamın kullanılacağına
+olasılıksal olarak karar veriliyor; uzun bağlamlar daha çok tercih ediliyor. Ardından
+seçilen seviyedeki aday kelimeler arasından temperature ile örnekleme yapılıyor.
+
+Bunun yanında son birkaç kelimede görünen bir kelime tekrar seçilirse ceza
+uygulanıyor. Bu, aynı kelimelerin döngüsel biçimde tekrar edilmesini önlüyor.
+
+Bu değişiklik özellikle paragraf üretiminde daha doğal görünen çıktılar sağladı.
+
+
+========================================================
+
+3. MATERYAL VE YÖNTEM
+
+Bu bölümde sistemin nasıl geliştirildiği, hangi araçların kullanıldığı ve modellerin
+nasıl oluşturulduğu anlatılmaktadır.
+
+
+3.1. Kullanılan Teknolojiler
+
+Sistem Python ile geliştirildi. Birinci bölümdeki temel yapı korundu; bazı kütüphaneler
+eklendi.
+
+Projede kullanılan başlıca araçlar:
+
+- Python: Ana geliştirme dili.
+- Flask: Web sunucusu. Kullanıcı arayüzü ve API burada çalışıyor.
+- Pickle: N-gram tablolarının diske yazılıp okunması için.
+- PyTorch: Transformer modelinin tanımlanması ve yüklenmesi için.
+- SentencePiece: Transformer modelinde kullanılan BPE tokenizer için.
+
+
+3.2. Veri Seti
+
+Eğitim verisi olarak story.txt kullanıldı. İngilizce metin içeren bu dosyanın ilk
+yaklaşık 10 milyon karakteri eğitim, geri kalan kısmı test için ayrıldı.
+
+N-gram modeli bu veriyi şu şekilde işliyor: önce küçük harfe çevriliyor, Wikipedia
+kökenli gereksiz karakterler temizleniyor, noktalama işaretleri TR0xx kodlarına
+dönüştürülüyor. Ardından 7-gram'a kadar tüm kelime geçişleri sayılarak tablolar
+oluşturuluyor.
+
+Transformer için ise ham metin BPE tokenizer'dan geçiriliyor. Noktalama işaretleri
+doğal olarak ayrı token haline geliyor; TR0xx sistemine burada gerek yok.
+
+Test seti, eğitimde kullanılmayan bir bölümden alındı. Bu sayede her iki model de
+daha önce görmediği veri üzerinde ölçüldü.
+
+
+3.3. N-gram Modeli
+
+N-gram modeli, model.py dosyasındaki NgramPredictor sınıfında tanımlandı.
+create_pickle.py çalıştırıldığında story.txt üzerinden eğitim yapılıyor ve sonuç
+saved_model.pkl dosyasına kaydediliyor.
+
+Model, unigram'dan 7-gram'a kadar tüm kelime geçişlerini ayrı sözlük yapılarında
+tutuyor. Tahmin sırasında önce 7-gram'da eşleşme aranıyor; bulunmazsa bir alt
+seviyeye iniliyor. Bu işlem 1-gram'a kadar devam ediyor.
+
+Modelin disk boyutu 247.5 MB. Yüklenirken bellek kullanımı yaklaşık 3.8 GB oluyor.
+Bu, tüm sözlüklerin Python nesnelerine dönüştürülmesinden kaynaklanıyor.
+
+
+3.4. Transformer Modeli
+
+Transformer modeli, transformer/ dizini altında tanımlandı. Metin soldan sağa
+üretecek şekilde kuruldu; her yeni token üretilirken öncekiler bağlam olarak
+kullanılıyor.
+
+Colab'da T4 GPU ile story.txt üzerinde eğitim yapıldı. Eğitilen model ağırlıkları
+checkpoints/ dizinine kaydedildi. Disk boyutu 158 MB.
+
+GPU olmayan bir ortamda da çalışıyor; ama CPU'da belirgin biçimde daha yavaş.
+
+
+3.5. Değerlendirme Betiği
+
+Birinci bölümde modeller gözlemsel olarak değerlendirilmişti. Bu projede somut
+ölçümler için evaluate.py yazıldı.
+
+Bu betik şunları hesaplıyor:
+
+Perplexity: Modelin test verisindeki her kelimeyi tahmin ederken ne kadar
+belirsiz kaldığını ölçüyor. Değer düştükçe tahmin daha iyi demek.
+
+Top-k doğruluk: Modelin önerdiği ilk k kelime içinde doğru kelimenin olup olmadığı
+kontrol ediliyor. k=1, 3 ve 5 için ayrı ayrı hesaplandı.
+
+Latency: Her model için cümle tamamlamanın kaç milisaniye sürdüğü ölçüldü.
+10 farklı prompt, 5'er kez tekrar edildi.
+
+Bellek: Model yüklenirken ve tahmin yapılırken RAM kullanımı izlendi.
+
+
+3.6. Web Arayüzü
+
+Kullanıcı arayüzü Flask ile çalışmaya devam ediyor. Birinci bölüme kıyasla
+eklenen özellikler şunlar:
+
+- Motor seçimi: N-gram veya Transformer arasında geçiş yapılabiliyor.
+- Temperature kontrolü: Kullanıcı değeri arayüzden ayarlayabiliyor.
+- Paragraf üretimi: Ctrl+Shift+Tab ile birden fazla cümle üretiliyor.
+- Hayalet metin: Kullanıcı yazarken gri bir devam önerisi görünüyor.
+- Olasılık paneli: N-gram tablolarının değerleri arayüzde gösteriliyor.
+
+Tanımlı API uç noktaları:
+
+  /predict_next       → Hayalet metin önerisi
+  /predict_sentence   → Cümle tamamlama
+  /predict_paragraph  → Paragraf üretimi
+  /probabilities      → N-gram olasılık tabloları
+  /health             → Sistem durumu
+
+
+========================================================
+
+4. BULGULAR
+
+Bu bölümde evaluate.py ile elde edilen sonuçlar sunulmaktadır. Tüm ölçümler,
+story.txt'nin eğitimde kullanılmayan kısmından alınan yaklaşık 50.000 karakterlik
+test seti üzerinde yapıldı.
+
+
+4.1. Model Özellikleri
+
+Tablo 4.1: İki Modelin Temel Özellikleri
+─────────────────────────────────────────────────────
+Özellik                N-gram          Transformer
+─────────────────────────────────────────────────────
+Yapısı                 7-gram tablosu  ~14M parametre
+Kelime dağarcığı       25.673 token    8.000 token
+Tokenizasyon           Boşlukla        BPE
+Disk boyutu            247.5 MB        158 MB
+─────────────────────────────────────────────────────
+
+
+4.2. Tahmin Başarısı
+
+Tablo 4.2: Tahmin Doğruluğu (Test Seti)
+─────────────────────────────────────────────────────
+Metrik                 N-gram          Transformer
+─────────────────────────────────────────────────────
+Perplexity             76.62           335.77
+Top-1 Doğruluk         %57.65          %22.71
+Top-3 Doğruluk         %63.73          %35.57
+Top-5 Doğruluk         %66.37          %41.64
+OOV oranı              %12.74          —
+─────────────────────────────────────────────────────
+
+N-gram modelinin Top-1 doğruluğu %57.65 çıktı. Yani modelin en iyi tahmini,
+test verisindeki 10 kelimeden yaklaşık 6'sında doğru. Perplexity 76.62; bu, her
+tahmin adımında modelin ortalama 76 seçenek arasında kaldığı anlamına geliyor.
+
+Transformer modelinin Top-1 değeri %22.71 oldu. Perplexity değeri ise 335.77
+ile N-gram'ın oldukça üzerinde. Bu aslında beklenen bir sonuç. Bu tür modellerin
+bu metriklerde iyi değerlere ulaşması için çok daha uzun eğitim ve büyük veri
+gerekiyor. Buradaki model kısıtlı bir Colab eğitimiyle oluşturuldu. Yine de
+çalışıyor ve anlam taşıyan cümleler çıkarabiliyor.
+
+OOV oranı N-gram için %12.74. Test setindeki token'ların yaklaşık sekizde biri,
+eğitim setinde hiç görülmemiş. BPE kullanan Transformer'da bu durum yok; bilinmeyen
+kelimeler parçalara bölünüp işleniyor.
+
+
+4.3. Backoff Dağılımı
+
+Aşağıdaki tablo, N-gram modelinin tahmin yaparken hangi seviyeye ne sıklıkla
+gittiğini gösteriyor.
+
+Tablo 4.3: Backoff Seviyesi Kullanım Oranları
+─────────────────────────────────────────────────────
+Seviye         Kullanım Oranı    Tahmin Sayısı
+─────────────────────────────────────────────────────
+7-gram         %43.7             4.088
+6-gram         %6.9              647
+5-gram         %7.8              727
+4-gram         %8.6              807
+3-gram         %9.5              890
+2-gram         %10.8             1.008
+1-gram         %12.7             1.187
+─────────────────────────────────────────────────────
+
+Tahminlerin %43.7'si 7-gram seviyesinde doğrudan eşleşme bularak yapılıyor.
+Bu, verinin 7-gram tabloları için yeterli örüntü içerdiğini gösteriyor. 1-gram'a
+inen %12.7'lik kısım ise OOV oranıyla örtüşüyor.
+
+
+4.4. Hız ve Bellek
+
+Tablo 4.4: Üretim Hızı (CPU Üzerinde)
+─────────────────────────────────────────────────────
+Metrik                 N-gram          Transformer
+─────────────────────────────────────────────────────
+Ortalama süre          5.25 ms         447.42 ms
+Medyan                 4.58 ms         446.88 ms
+Token/saniye           9.527           111
+─────────────────────────────────────────────────────
+
+Tablo 4.5: Bellek Kullanımı
+─────────────────────────────────────────────────────
+Metrik                 N-gram          Transformer
+─────────────────────────────────────────────────────
+Yükleme RAM            ~3.8 GB         ~53 MB
+Disk boyutu            247.5 MB        158 MB
+─────────────────────────────────────────────────────
+
+N-gram modeli yüklenirken yaklaşık 3.8 GB RAM kullanıyor. Bu yüksek bir değer.
+7-gram tablolarının Python sözlük yapılarına dönüşmesi bu kadar yer tutuyor.
+Tahmin sırasında ek bellek tüketimi yok.
+
+Transformer'ın yükleme belleği 53 MB. N-gram'a kıyasla çok daha az. Ama CPU'da
+ortalama 447 ms'de yanıt veriyor; N-gram'ın 5 ms'si ile kıyaslandığında oldukça
+yavaş.
+
+Bu fark nedeniyle hayalet metin önerisi için N-gram, cümle ve paragraf üretimi
+için ise Transformer kullanılıyor.
+
+
+4.5. Örnek Çıktılar
+
+Aşağıda sisteme verilen başlangıç metinlerine karşılık alınan çıktılar gözlemsel
+olarak aktarıldı.
+
+  Girdi: "the company announced"
+  N-gram: "the company announced that it would be unable to pay the bill ."
+  Transformer: "the company announced a new deal with investors last week ."
+
+  Girdi: "the first time"
+  N-gram (T=1.5): "the first time he had seen her since the accident ."
+  N-gram (T=0.5): "the first time in the history of the united states ."
+
+Her iki modelin de dil bilgisi açısından tutarlı cümleler üretebildiği gözlemlendi.
+N-gram'da temperature düştükçe çıktının kalıplaşmaya yöneldiği görüldü. Hayalet
+metin önerisinin beklenen şekilde çalıştığı doğrulandı.
+
+
+========================================================
+
+5. TARTIŞMA VE SONUÇ
+
+Bu projede Bitirme Projesi I'deki sistemin üzerine birkaç değişiklik yapıldı ve
+ölçüm altyapısı kuruldu.
+
+
+5.1. Sonuçların Değerlendirilmesi
+
+Sayılara bakınca birkaç şey öne çıkıyor.
+
+N-gram modeli bu projenin kapsamı içinde hızlı ve kullanılabilir sonuçlar verdi.
+Ortalama 5 ms, web uygulamaları için yeterli bir hız. Top-1 doğruluğunun %57
+seviyesinde olması, modelin eğitim verisindeki kalıpları tutarlı biçimde öğrendiğini
+gösteriyor. 3.8 GB yükleme belleği bir kısıt olmakla birlikte, bu sadece başlangıçta
+oluşuyor; sonrasında ek yük yok.
+
+Transformer'ın perplexity değeri N-gram'ın oldukça üzerinde çıktı. Bu başta hayal
+kırıklığı gibi görünebilir. Ama bunun sebebi modelin hatalı kurulması değil; bu tür
+modellerin gerçek kapasiteye ulaşması için çok daha uzun eğitime ihtiyaç duyması.
+Buradaki model Colab kısıtlarıyla yapılabilecek bir başlangıç denemesidir. Bellek
+kullanımının N-gram'a kıyasla çok düşük kalması ise ayrıca dikkat çekiyor.
+
+Bu bölümde en somut gelişme, değerlendirme altyapısının kurulmuş olmasıdır.
+Artık "model çalışıyor" demek yerine, belirli bir test seti üzerinde ne kadar iyi
+tahmin yaptığını sayıyla görebiliyoruz.
+
+
+5.2. Kısıtlar
+
+N-gram'ın yükleme belleği bir sorun. 3.8 GB isteyen bir model, kısıtlı ortamlarda
+çalışamaz. Tablonun farklı bir yapıda saklanmasıyla bu azaltılabilir; ama bu projede
+uygulanmadı.
+
+Transformer eğitimi de bir sorun oldu. Colab ücretsiz planı zaman zaman kesiliyor;
+bu nedenle model gerçek kapasitesine ulaşamadan ölçüme alındı.
+
+Veri seti de bir kısıt. story.txt belirli bir alana ait İngilizce metin içeriyor.
+Farklı bir dil ya da alan için yeniden eğitim şart.
+
+Son olarak, perplexity ve Top-k gibi metrikler modelin tahmin gücünü sayısal olarak
+ölçüyor; üretilen metnin okunabilirliğini değil. İnsan değerlendirmesi daha gerçekçi
+bir tablo sunar; ama bu projenin kapsamı dışında kaldı.
+
+
+5.3. Gelecek Çalışmalar
+
+Transformer modelinin daha uzun eğitimle geliştirilebileceği düşünülüyor. Mevcut
+sonuçlar potansiyelin altında; ek eğitimle perplexity değerinin düşmesi bekleniyor.
+
+N-gram tablolarının daha az bellek kullanan veri yapılarıyla saklanması da bir
+seçenek. Şu anki yapı çok fazla yer tutuyor.
+
+BPE tokenizasyonu dil bağımsız çalışabildiğinden Türkçe bir veri seti üzerinde
+benzer bir eğitim yapılabilir.
+
+Sonuç olarak, birinci bölümde kurulan sistem bu aşamada hem genişletildi hem de
+ölçülebilir hale getirildi. Bir Elektrik-Elektronik Mühendisliği öğrencisi olarak
+bu süreçte öğrendiğim en önemli şey, sayısal ölçüm olmadan bir modeli değerlendirmenin
+ne kadar yanıltıcı olabileceğiydi.
+
+
+========================================================
+
+KAYNAKLAR
+
+[1] Brants, T., Popat, A. C., Xu, P., Och, F. J., & Dean, J. (2007). "Large Language
+    Models in Machine Translation". Proceedings of EMNLP-CoNLL, Prague.
+
+[2] Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N.,
+    Kaiser, L., & Polosukhin, I. (2017). "Attention Is All You Need". Advances in
+    Neural Information Processing Systems, 30.
+
+[3] Kudo, T., & Richardson, J. (2018). "SentencePiece: A simple and language
+    independent subword tokenizer and detokenizer for Neural Text Processing".
+    Proceedings of EMNLP 2018 System Demonstrations.
+
+[4] Ackley, D. H., Hinton, G. E., & Sejnowski, T. J. (1985). "A Learning Algorithm
+    for Boltzmann Machines". Cognitive Science, 9(1), 147–169.
+
+[5] Jurafsky, D., & Martin, J. H. (2024). Speech and Language Processing.
+    3rd Edition Draft, Pearson.
+
+[6] Radford, A., Wu, J., Child, R., Luan, D., Amodei, D., & Sutskever, I. (2019).
+    "Language Models are Unsupervised Multitask Learners". OpenAI Technical Report.
+
+[7] Hochreiter, S., & Schmidhuber, J. (1997). "Long Short-Term Memory".
+    Neural Computation, 9(8), 1735–1780.
+
+[8] Goodfellow, I., Bengio, Y., & Courville, A. (2016). Deep Learning. MIT Press.
+
+[9] PyTorch Foundation. (2024). PyTorch Documentation.
+    https://pytorch.org/docs/stable/
+
+[10] Kneser, R., & Ney, H. (1995). "Improved backing-off for M-gram language
+     modeling". ICASSP 1995, Vol. 1, 181–184.
+
+
+========================================================
+
+EKLER
+
+EK A: TEMEL KOD BLOKLARI
+
+A.1. N-gram Backoff Zinciri (model.py — kısaltılmış)
+
+Tahmin sırasında 7-gram'dan başlayıp 1-gram'a kadar inen arama döngüsü:
+
+--------------------------------------------------
+def _predict_most_likely_next(self, context: list):
+    # 7-gram'dan 4-gram'a bak
+    for n in range(self.max_n, 3, -1):
+        key   = tuple(context[-(n - 1):])
+        cands = self.ngram_counts[n].get(key)
+        if cands:
+            return max(cands, key=cands.get)
+
+    # Trigram
+    if len(context) >= 2:
+        cands = self.trigram_counts.get((context[-2], context[-1]))
+        if cands:
+            return max(cands, key=cands.get)
+
+    # Bigram
+    if context:
+        cands = self.bigram_counts.get(context[-1])
+        if cands:
+            return max(cands, key=cands.get)
+
+    # Unigram (son çare)
+    return self.unigram_counts.most_common(1)[0][0]
+--------------------------------------------------
+
+
+A.2. Temperature Örneklemesi (model.py)
+
+--------------------------------------------------
+@staticmethod
+def _tempered(scores: dict, temperature: float) -> dict:
+    T = max(temperature, 1e-3)
+    powered = {k: (v ** (1.0 / T)) for k, v in scores.items()}
+    tot = sum(powered.values()) or 1.0
+    return {k: p / tot for k, p in powered.items()}
+--------------------------------------------------
+
+
+A.3. Noktalama Token Sözlüğü (text_utils.py)
+
+--------------------------------------------------
+PUNCTUATION_TOKENS = {
+    '.': 'TR001',  # nokta
+    ',': 'TR002',  # virgül
+    '!': 'TR003',  # ünlem
+    '?': 'TR004',  # soru
+    ';': 'TR005',  # noktalı virgül
+    ':': 'TR006',  # iki nokta
+    '-': 'TR007',  # tire
+    '\n': 'TR017', # satır sonu
+}
+--------------------------------------------------
+
+
+EK B: DEĞERLENDİRME SONUÇLARI ÖZETİ
+
+evaluate.py çalıştırıldığında konsola yansıyan tablo:
+
+--------------------------------------------------
+| Metrik            | N-gram  | Transformer |
+|-------------------|---------|-------------|
+| Perplexity        | 76.62   | 335.77      |
+| Top-1 Doğruluk    | %57.65  | %22.71      |
+| Top-3 Doğruluk    | %63.73  | %35.57      |
+| Top-5 Doğruluk    | %66.37  | %41.64      |
+| Ort. Latency (ms) | 5.25    | 447.42      |
+| Yükleme RAM (MB)  | 3863    | 53          |
+| Disk (MB)         | 247.5   | 158.1       |
+--------------------------------------------------
+
+Tam sonuçlar evaluation_results.json dosyasında mevcut.
+
+
+EK C: KURULUM
+
+1. Gereksinimleri yükle:
+   pip install torch flask numpy sentencepiece
+
+2. N-gram modeli oluştur (story.txt gerekli):
+   python create_pickle.py
+
+3. Transformer modelini Colab'da eğit:
+   notebooks/colab_train.ipynb dosyasını aç.
+   Eğitim bitince checkpoints/transformer.pt oluşur.
+
+4. Web sunucusunu başlat:
+   python app.py
+   → http://localhost:5000
+
+5. Değerlendirme çalıştır (opsiyonel):
+   python evaluate.py
+
+========================================================

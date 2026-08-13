@@ -112,13 +112,20 @@ def replace_punctuation_with_tokens(text: str) -> str:
     return text
 
 
+_TR_TOKEN_RE = re.compile(
+    r"\s*\b(" + "|".join(re.escape(t) for t in TOKEN_TO_PUNCTUATION) + r")\b\s*"
+)
+
+
 def restore_punctuation_from_tokens(text: str) -> str:
-    for token, punct in TOKEN_TO_PUNCTUATION.items():
-        text = text.replace(f" {token} ", punct + " ")
-        text = text.replace(f"{token} ", punct + " ")
-        if text.endswith(token):
-            text = text[:-len(token)] + punct
-    return text
+    """Single-pass replacement so consecutive TR-tokens (e.g. 'TR011 TR002')
+    can't corrupt each other's surrounding whitespace and leave a raw
+    'TRxxx' token un-restored — the previous sequential .replace() approach
+    was order-dependent and could do exactly that."""
+    def repl(m):
+        return TOKEN_TO_PUNCTUATION[m.group(1)] + " "
+
+    return _TR_TOKEN_RE.sub(repl, text).strip()
 
 
 def is_punctuation_token(token: str) -> bool:

@@ -176,13 +176,14 @@ def predict_next():
 
     Query params
     ------------
-    text : str — current editor content
+    text        : str   — current editor content
+    temperature : float — sampling temperature (default 1.0)
     """
     if ngram is None:
         return jsonify({"ghost": ""})
-    text = request.args.get("text", "")
-    # Ghost autocomplete is deterministic and temperature-independent by design.
-    ghost = ngram.get_ghost_text(text)
+    text        = request.args.get("text", "")
+    temperature = safe_float(request.args.get("temperature"), 1.0, lo=0.1, hi=5.0)
+    ghost = ngram.get_ghost_text(text, temperature=temperature)
     return jsonify({"ghost": ghost})
 
 

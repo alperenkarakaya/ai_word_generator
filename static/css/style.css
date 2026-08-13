@@ -302,10 +302,29 @@ kbd {
     color: white;
 }
 
+.selection-badge {
+    background: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
+    color: white;
+}
+
 /* Stage-1 level-selection panel — full width above the per-order grid */
 .level-card {
     margin-bottom: var(--spacing-md);
     border: 1px solid var(--accent-primary);
+}
+
+/* Stage-1 × Stage-2 combined next-word selection panel — full width */
+.selection-card {
+    margin-bottom: var(--spacing-md);
+    border: 1px solid #f59e0b;
+}
+
+/* which n-gram order(s) contributed a word's selection probability */
+.selection-sources {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    font-family: 'Courier New', monospace;
+    margin-left: var(--spacing-sm);
 }
 
 .card-title {

@@ -48,6 +48,10 @@ data/
 # Legacy LSTM weights (too large)
 lstm_model.pth
 
+# Trained model checkpoints (too large for GitHub's 100MB limit)
+saved_model.pkl
+saved_model.pkl.bak
+
 # IDEs
 .vscode/
 .idea/

@@ -1,0 +1,107 @@
+{
+  "perplexity": {
+    "ngram": {
+      "perplexity": 76.62,
+      "log_prob_sum": -40585.9,
+      "num_positions": 9354,
+      "oov_count": 1192,
+      "oov_rate": 0.1274,
+      "backoff_distribution": {
+        "1": 0.1269,
+        "2": 0.1078,
+        "3": 0.0951,
+        "4": 0.0863,
+        "5": 0.0777,
+        "6": 0.0692,
+        "7": 0.437
+      }
+    },
+    "transformer": {
+      "perplexity": 335.77,
+      "mean_cross_entropy": 5.8164,
+      "num_tokens": 10969
+    },
+    "ngram_bpc": 1.1711,
+    "transformer_bpc": 1.8409
+  },
+  "topk_accuracy": {
+    "ngram": {
+      "num_positions": 9354,
+      "top1": 0.5765,
+      "top3": 0.6373,
+      "top5": 0.6637
+    },
+    "transformer": {
+      "num_tokens": 10969,
+      "top1": 0.2271,
+      "top3": 0.3557,
+      "top5": 0.4164
+    }
+  },
+  "latency": {
+    "ngram": {
+      "mean_ms": 5.25,
+      "median_ms": 4.58,
+      "p95_ms": 7.31,
+      "std_ms": 1.1,
+      "tokens_per_second": 9527.7,
+      "num_prompts": 10,
+      "repeats_per_prompt": 5
+    },
+    "transformer": {
+      "mean_ms": 447.42,
+      "median_ms": 446.88,
+      "p95_ms": 468.15,
+      "std_ms": 12.69,
+      "tokens_per_second": 111.3,
+      "num_prompts": 10,
+      "repeats_per_prompt": 5
+    }
+  },
+  "memory": {
+    "ngram": {
+      "model_load_peak_mb": 3863.3,
+      "inference_peak_mb": 0.0,
+      "disk_size_mb": 247.5
+    },
+    "transformer": {
+      "model_load_peak_mb": 53.1,
+      "inference_peak_mb": 0.0,
+      "disk_size_mb": 158.1,
+      "tokenizer_size_mb": 0.36,
+      "param_memory_mb": 52.7,
+      "num_parameters": 13808640
+    }
+  },
+  "metadata": {
+    "timestamp": "2026-06-18T13:35:54",
+    "test_data": {
+      "source": "story.txt",
+      "train_cutoff_chars": 10000000,
+      "test_chars_used": 50000,
+      "ngram_test_tokens": 9355,
+      "transformer_test_tokens": 10970
+    },
+    "ngram_config": {
+      "max_n": 7,
+      "vocab_size": 25673,
+      "total_training_words": 1886390,
+      "model_file": "saved_model.pkl",
+      "model_size_mb": 247.5
+    },
+    "transformer_config": {
+      "vocab_size": 8000,
+      "block_size": 256,
+      "n_layer": 6,
+      "n_head": 6,
+      "d_model": 384,
+      "d_ff": 1536,
+      "dropout": 0.1,
+      "num_parameters": 13808640,
+      "model_file": "checkpoints/transformer.pt",
+      "model_size_mb": 158.1,
+      "device": "cpu"
+    }
+  },
+  "markdown_tables": "### Table 1 — Model Overview\n\n| Property | N-gram (7-gram) | Transformer (GPT) |\n|---|---|---|\n| Architecture | Stupid Backoff 7->1 | 6-layer decoder-only |\n| Vocabulary | 25,673 (whitespace) | 8,000 (BPE) |\n| Parameters | N/A (count tables) | 13.8M |\n| Training tokens | 1,886,390 | trained on Colab |\n| Disk size | 247.5 MB | 158.1 MB |\n\n### Table 2 — Language Modeling Quality\n\n| Metric | N-gram | Transformer |\n|---|---|---|\n| Perplexity | 76.62 | 335.77 |\n| Bits-per-character | 1.1711 | 1.8409 |\n| Top-1 Accuracy | 57.65% | 22.71% |\n| Top-3 Accuracy | 63.73% | 35.57% |\n| Top-5 Accuracy | 66.37% | 41.64% |\n| OOV Rate | 12.74% | N/A (BPE) |\n| Eval tokens | 9,354 | 10,969 |\n\n### Table 3 — Generation Performance\n\n| Metric | N-gram | Transformer |\n|---|---|---|\n| Mean latency (ms) | 5.2 | 447.4 |\n| Median latency (ms) | 4.6 | 446.9 |\n| P95 latency (ms) | 7.3 | 468.1 |\n| Tokens/second | 9,527.7 | 111.3 |\n\n### Table 4 — Resource Usage\n\n| Metric | N-gram | Transformer |\n|---|---|---|\n| Model load peak RAM (MB) | 3863.3 | 53.1 |\n| Inference peak RAM (MB) | 0.0 | 0.0 |\n| Disk footprint (MB) | 247.5 | 158.1 |\n| Parameter memory (MB) | N/A | 52.7 |\n\n### Table 5 — N-gram Backoff Level Distribution\n\n| Backoff Level | Frequency |\n|---|---|\n| 7-gram | 43.7% (4,088) |\n| 6-gram | 6.9% (647) |\n| 5-gram | 7.8% (727) |\n| 4-gram | 8.6% (807) |\n| Trigram | 9.5% (890) |\n| Bigram | 10.8% (1,008) |\n| Unigram | 12.7% (1,187) |\n"
+}

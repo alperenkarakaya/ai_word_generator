@@ -70,6 +70,15 @@ class TransformerEngine:
         self.model.load_state_dict(ckpt["model"])
         self.model.eval()
 
+        # Precompute which vocab ids start a new word (SentencePiece '▁' prefix).
+        # Used to stop sentence generation from opening with an orphaned
+        # word-continuation piece (e.g. "ies", "al") that has no stem before it.
+        self._space_prefix_mask = torch.tensor(
+            [self.sp.id_to_piece(i).startswith("▁")
+             for i in range(self.sp.get_piece_size())],
+            dtype=torch.bool, device=self.device,
+        )
+
         print(
             f"TransformerEngine ready — "
             f"{self.model.num_parameters() / 1e6:.1f}M params, "
@@ -81,7 +90,7 @@ class TransformerEngine:
     # ------------------------------------------------------------------ #
 
     def _sample_one(self, logits: torch.Tensor, history: torch.Tensor,
-                    sc: SamplingConfig) -> int:
+                    sc: SamplingConfig, require_space_prefix: bool = False) -> int:
         logits = logits.clone().float()
 
         if sc.repetition_penalty != 1.0 and history.numel() > 0:
@@ -92,6 +101,11 @@ class TransformerEngine:
                 scores / sc.repetition_penalty,
                 scores * sc.repetition_penalty,
             )
+
+        if require_space_prefix and self._space_prefix_mask.any():
+            masked = logits.masked_fill(~self._space_prefix_mask, float("-inf"))
+            if torch.isfinite(masked).any():
+                logits = masked
 
         if sc.temperature > 0:
             logits = logits / sc.temperature
@@ -112,6 +126,18 @@ class TransformerEngine:
         probs = F.softmax(logits, dim=-1)
         return torch.multinomial(probs, num_samples=1).item()
 
+    @staticmethod
+    def _needs_new_word(prompt: str) -> bool:
+        """True if the next generated token should start a fresh word — i.e.
+        the prompt is empty, ends in whitespace, or ends in sentence-final
+        punctuation (so the model isn't finishing a word the user is mid-typing)."""
+        stripped = prompt.rstrip()
+        if not stripped:
+            return True
+        if prompt != stripped:
+            return True
+        return stripped[-1] in SENTENCE_END_CHARS
+
     def _encode_prompt(self, text: str) -> list[int]:
         ids = encode(text)
         if not ids:
@@ -127,7 +153,8 @@ class TransformerEngine:
     def _generate_loop(self, prompt_ids: list[int], sc: SamplingConfig,
                        stop_on_sentence: bool = False,
                        stop_on_paragraph: bool = False,
-                       max_sentences: Optional[int] = None) -> list[int]:
+                       max_sentences: Optional[int] = None,
+                       first_token_space_prefix: bool = False) -> list[int]:
         """
         Autoregressive generation with KV-cache and sliding-window fallback.
 
@@ -146,7 +173,10 @@ class TransformerEngine:
 
         for step in range(sc.max_new_tokens):
             history = torch.tensor(all_tokens, dtype=torch.long, device=self.device)
-            next_id = self._sample_one(logits[0, -1, :], history, sc)
+            next_id = self._sample_one(
+                logits[0, -1, :], history, sc,
+                require_space_prefix=(step == 0 and first_token_space_prefix),
+            )
             all_tokens.append(next_id)
             new_ids.append(next_id)
 
@@ -214,14 +244,18 @@ class TransformerEngine:
 
     def generate(self, prompt: str, max_new_tokens: int = 80, **kwargs) -> str:
         sc = SamplingConfig(max_new_tokens=max_new_tokens, **kwargs)
-        ids = self._generate_loop(self._encode_prompt(prompt), sc)
+        ids = self._generate_loop(
+            self._encode_prompt(prompt), sc,
+            first_token_space_prefix=self._needs_new_word(prompt),
+        )
         return decode(ids)
 
     def generate_until_sentence_end(self, prompt: str,
                                     max_new_tokens: int = 60, **kwargs) -> str:
         sc = SamplingConfig(max_new_tokens=max_new_tokens, **kwargs)
         ids = self._generate_loop(
-            self._encode_prompt(prompt), sc, stop_on_sentence=True
+            self._encode_prompt(prompt), sc, stop_on_sentence=True,
+            first_token_space_prefix=self._needs_new_word(prompt),
         )
         raw = decode(ids)
         return self._trim_to_sentence(raw)
@@ -243,6 +277,7 @@ class TransformerEngine:
             ids = self._generate_loop(
                 self._encode_prompt(context), sc,
                 stop_on_sentence=True,
+                first_token_space_prefix=self._needs_new_word(context),
             )
             raw = decode(ids)
             sent = self._trim_to_sentence(raw)

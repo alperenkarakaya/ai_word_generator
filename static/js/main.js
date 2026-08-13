@@ -9,6 +9,7 @@ const fivegramList     = document.getElementById('fivegram-list');
 const sixgramList      = document.getElementById('sixgram-list');
 const sevengramList    = document.getElementById('sevengram-list');
 const levelList        = document.getElementById('level-list');
+const selectionList    = document.getElementById('selection-list');
 const bigramWordSpan   = document.getElementById('bigram-word');
 const trigramCtxSpan   = document.getElementById('trigram-context');
 const fourgramCtxLabel = document.getElementById('fourgram-ctx-label');
@@ -84,6 +85,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if (temperatureSlider && temperatureValue) {
         temperatureSlider.addEventListener('input', () => {
             temperatureValue.textContent = parseFloat(temperatureSlider.value).toFixed(1);
+            // Re-fetch the probability panel so it reflects the new temperature
+            // immediately, without requiring the user to retype something.
+            inputField.dispatchEvent(new Event('input'));
         });
     }
 
@@ -118,8 +122,7 @@ function handleInput() {
         if (getEngine() === 'ngram') {
             const seq = ++ghostSeq;
             try {
-                // Ghost is deterministic — temperature is intentionally not sent.
-                const r = await fetch(`/predict_next?text=` + encodeURIComponent(text));
+                const r = await fetch(`/predict_next?temperature=${getTemperature()}&text=` + encodeURIComponent(text));
                 const d = await r.json();
                 if (seq === ghostSeq) {
                     renderGhost(text, d.ghost || '');
@@ -198,9 +201,24 @@ function handleKeydown(e) {
 
         inputField.value = newValue;
         inputField.setSelectionRange(newValue.length, newValue.length);
-        ghostField.innerHTML = '';
-        currentGhost = '';
-        inputField.dispatchEvent(new Event('input'));
+
+        if (newValue === currentGhost) {
+            // Fully consumed this suggestion — nothing left to reveal.
+            ghostField.innerHTML = '';
+            currentGhost = '';
+        } else {
+            // Keep showing the rest of the SAME already-fetched suggestion
+            // instead of re-fetching (which would re-roll a brand new random
+            // draw now that ghost text is temperature-sampled).
+            renderGhost(newValue, currentGhost);
+        }
+
+        // Probability panels still refresh for the new context; ghost itself
+        // is handled locally above, so no full input-event re-fetch here.
+        fetch(`/probabilities?temperature=${getTemperature()}&text=` + encodeURIComponent(newValue))
+            .then(r => r.json())
+            .then(d => renderProbabilities(d))
+            .catch(() => {});
         return;
     }
 
@@ -219,6 +237,7 @@ function truncateCtx(ctx, maxLen = 24) {
 
 function renderProbabilities(data) {
     renderLevels(levelList, data.levels || []);
+    renderSelection(selectionList, data.selection || []);
 
     renderList(unigramList, data.unigram || [], 'Start typing…');
 
@@ -277,6 +296,36 @@ function renderList(container, items, emptyMsg) {
             </div>
         </div>`
     ).join('');
+}
+
+// ── Next-Word Selection panel (Stage-1 × Stage-2 combined, temperature-aware) ───
+// Shows the true probability the generator samples each word, and which n-gram
+// order(s) contributed that probability mass.
+function renderSelection(container, items) {
+    if (!container) return;
+    if (!items.length) {
+        container.innerHTML = `<div class="no-data">Start typing…</div>`;
+        return;
+    }
+    container.innerHTML = items.map((item, i) => {
+        const srcs = (item.sources || [])
+            .map(s => `${s.level}-gram ${s.pct}%`)
+            .join(' · ');
+        return `
+        <div class="prediction-item${i === 0 ? ' top-choice' : ''}">
+            <div class="word-info">
+                <span class="word-rank">#${i + 1}</span>
+                <span class="word-text">${escapeHtml(item.word)}</span>
+                ${srcs ? `<span class="selection-sources" title="probability mass by n-gram order">${srcs}</span>` : ''}
+            </div>
+            <div class="probability-info">
+                <div class="probability-bar-container">
+                    <div class="probability-bar" style="width:${item.probability}%"></div>
+                </div>
+                <span class="probability-value">${item.probability}%</span>
+            </div>
+        </div>`;
+    }).join('');
 }
 
 // ── Level Selection panel (Stage-1 P(level=n), temperature-aware) ───────────────
